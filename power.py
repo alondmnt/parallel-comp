@@ -26,14 +26,12 @@ QFile = '../jobs/job_queue.pickle'
 def submit_jobs(MaxJobs=1, JobDir='../jobs/'):
     DefResource = {'mem': '6gb', 'pmem': '6gb', 'vmem': '12gb',
                    'pvmem': '12gb', 'cput': '04:59:00'}
-    JobDir = os.path.abspath(JobDir)
-    QFile = JobDir + '/job_queue.pickle'
-    ErrDir = JobDir + '/logs/err'
-    OutDir = JobDir + '/logs/out'
+    JobDir = os.path.abspath(JobDir) + '/'
+    ErrDir = JobDir + 'logs/err'
+    OutDir = JobDir + 'logs/out'
 
     Qsub = ['qsub', '-q', 'tamirs1', '-e', ErrDir, '-o', OutDir, '-l']
-    get_jobs_stat()
-    Q = pickle.load(open(QFile, 'rb'))
+    Q = get_jobs_stat(JobDir)  # also updates global job queue file
 
     """
     JOB/PART PRIORITY RULES
@@ -66,6 +64,7 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/'):
         for part in PartList:
             if part['priority'] < job_priority[JobID]:
                 continue
+            part = get_part_info(JobID, part['JobPart'])
             if (part['status'] == 'init'):
                 print('submiting:\t{}'.format(part['script']))
                 if 'resources' in part:
@@ -76,48 +75,46 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/'):
                                    for k, v in sorted(this_res.items())])]
                 subprocess.call(this_sub + [part['script']])
                 part['status'] = 'submit'
+                update_part(part)  # updates local job file
                 count += 1
                 if count >= MaxJobs:
                     break
-        update_queue(PartList)
+        update_job(PartList)  # updates global job queue
 
     print('submitted {} jobs'.format(count))
 
 
-def get_jobs_stat(ReInit=False):
+def get_jobs_stat(JobDir='../jobs/', ReInit=False):
     """
     goes over QFile. if there's something new to update - update it.
     this function, along with generate_jobs and submit_jobs, are the only ones
-    to write to QFile. (RP.sum_RP_job also updates the queue, using
-    update_queue)
+    to write to QFile.
     """
+    global QFile
+    QFile = JobDir + 'job_queue.pickle'
     Q = pickle.load(open(QFile, 'rb'))
     for JobID in list(Q):
         if len(Q[JobID]) == 0:
             del(Q[JobID])
             continue
         Completed = sum([1 for part in Q[JobID]
-                         if (part['status'] == 'complete')
-                         or (part['status'] == 'collected')])
+                         if (part['status'] == 'complete') or
+                         (part['status'] == 'collected')])
         Completed /= len(Q[JobID])
         if (Completed == 1):
             continue
         for p, part in enumerate(Q[JobID]):
-            JobFile = '../jobs/{}/info_{}.pickle' \
-                .format(JobID, part['JobPart'])
+            JobFile = part['jobfile']
             if os.path.isfile(JobFile):
                 JobInfo = pickle.load(open(JobFile, 'rb'))
                 if ReInit and JobInfo['status'] != 'complete':
                     JobInfo['status'] = 'init'
                 Q[JobID][p] = JobInfo
+            else:
+                Q[JobID][p] = []
+        Q[JobID] = [p for p in Q[JobID] if len(p) > 0]
     pickle.dump(Q, open(QFile, 'wb'))
     return Q
-
-
-def update_queue(JobInfo):
-    Q = pickle.load(open(QFile, 'rb'))
-    Q[JobInfo[0]['JobID']] = JobInfo
-    pickle.dump(Q, open(QFile, 'wb'))
 
 
 def parse_qstat(text):
@@ -140,6 +137,7 @@ def get_qstat():
 
 
 def get_queue():
+    # reads from global job queue file
     Q = pickle.load(open(QFile, 'rb'))
     for JobID in sorted(list(Q)):
         parts = Q[JobID]
@@ -154,14 +152,37 @@ def get_queue():
         print(status)
 
 
-def set_part_status(JobInfo):
+def get_job_info(JobID):
     Q = pickle.load(open(QFile, 'rb'))
-    Q[JobInfo['JobID']][JobInfo['JobPart']] = JobInfo
+    return [pickle.load(open(Q[JobID][part['JobPart']]['jobfile'], 'rb'))
+            for part in Q[JobID]]
+
+
+def get_job_file(JobID, JobPart):
+    Q = pickle.load(open(QFile, 'rb'))
+    return Q[JobID][JobPart]['jobfile']
+
+
+def get_part_info(JobID, JobPart):
+    return pickle.load(open(get_job_file(JobID, JobPart), 'rb'))
+
+
+def update_part(PartInfo):
+    # updates the specific part's local job file (not global queue)
+    pickle.dump(PartInfo, open(PartInfo['jobfile'], 'wb'))
+
+
+def update_job(JobInfo):
+    # updates the global job queue
+    Q = pickle.load(open(QFile, 'rb'))
+    Q[JobInfo[0]['JobID']] = JobInfo
     pickle.dump(Q, open(QFile, 'wb'))
 
 
 def set_job_status(JobID, NewStatus):
+    # updates the specific parts' local job files (not global queue)
     Q = pickle.load(open(QFile, 'rb'))
     for part in Q[JobID]:
+        part = get_part_info(JobID, part['JobPart'])
         part['status'] = NewStatus
-    pickle.dump(Q, open(QFile, 'wb'))
+        update_part(part)
