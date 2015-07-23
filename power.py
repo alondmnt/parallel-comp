@@ -23,14 +23,14 @@ else:
 QFile = '../jobs/job_queue.pickle'
 
 
-def submit_jobs(MaxJobs=1, JobDir='../jobs/'):
+def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1'):
     DefResource = {'mem': '6gb', 'pmem': '6gb', 'vmem': '12gb',
                    'pvmem': '12gb', 'cput': '04:59:00'}
     JobDir = os.path.abspath(JobDir) + '/'
     ErrDir = JobDir + 'logs/err'
     OutDir = JobDir + 'logs/out'
 
-    Qsub = ['qsub', '-q', 'tamirs1', '-e', ErrDir, '-o', OutDir, '-l']
+    Qsub = ['qsub', '-q', PowerQ, '-e', ErrDir, '-o', OutDir, '-l']
     Q = get_jobs_stat(JobDir)  # also updates global job queue file
 
     """
@@ -61,7 +61,7 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/'):
         PartList = Q[JobID]
         if len(PartList) == 0:
             continue
-        for part in PartList:
+        for p, part in enumerate(PartList):
             if part['priority'] < job_priority[JobID]:
                 continue
             part = get_part_info(JobID, part['JobPart'])
@@ -76,6 +76,7 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/'):
                 subprocess.call(this_sub + [part['script']])
                 part['status'] = 'submit'
                 update_part(part)  # updates local job file
+                PartList[p] = part
                 count += 1
                 if count >= MaxJobs:
                     break
@@ -109,6 +110,7 @@ def get_jobs_stat(JobDir='../jobs/', ReInit=False):
                 JobInfo = pickle.load(open(JobFile, 'rb'))
                 if ReInit and JobInfo['status'] != 'complete':
                     JobInfo['status'] = 'init'
+                    update_part(JobInfo)
                 Q[JobID][p] = JobInfo
             else:
                 Q[JobID][p] = []
