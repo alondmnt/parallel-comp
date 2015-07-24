@@ -147,10 +147,9 @@ def get_queue():
             continue
         print('\n{}: {}/{}'.format(JobID, parts[0]['organism'],
                                    '-'.join(parts[0]['name'])))
-        status = {'init': [], 'submit': [], 'run': [], 'complete': [],
-                  'collected': []}
+        status = {}
         for p in parts:
-            status[p['status']].append(p['JobPart'])
+            dict_append(status, p['status'], p['JobPart'])
         print(status)
 
 
@@ -188,3 +187,9 @@ def set_job_status(JobID, NewStatus):
         part = get_part_info(JobID, part['JobPart'])
         part['status'] = NewStatus
         update_part(part)
+
+
+def dict_append(dictionary, key, value):
+    if key not in dictionary:
+        dictionary[key] = []
+    dictionary[key].append(value)
