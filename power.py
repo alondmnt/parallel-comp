@@ -12,9 +12,17 @@ import pickle
 
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on power
-    JobID = os.environ['PBS_JOBID']
+    JobID = os.environ['PBS_JOBID'].split('.')[0]
 else:
     JobID = None
+if 'HOSTNAME' in os.environ:
+    hostname = os.environ['HOSTNAME']
+else:
+    hostname = None
+if (JobID is not None) or (hostname == 'power.tau.ac.il'):
+    running_on_power = True
+else:
+    running_on_power = False
 
 if os.name == 'posix':
     DrivePath = '/tamir1/dalon/'
@@ -100,9 +108,27 @@ def get_qstat():
     return parse_qstat(subprocess.check_output(['qstat', '-f', JobID]))
 
 
+def get_power_queue():
+    Q = {}
+    if not running_on_power:
+        return Q
+    data = subprocess.check_output(['qstat', '-u', os.environ['USER']],
+                                   universal_newlines=True)
+    data = data.split('\n')
+    for line in data:
+        job = re.match('(\d+).power', line)
+        if job:
+            line = re.split('\s+', line)
+            Q[job.group(1)] = line[3]
+    return Q
+
+
 def get_queue(Verbose=True):
     # reads from global job queue file
     Q = pickle.load(open(QFile, 'rb'))
+    count_total = sum([len(j) for j in Q.values()])
+    powQ = get_power_queue()
+    count_run = 0
     for JobID in sorted(list(Q)):
         if len(Q[JobID]) == 0:
             continue
@@ -110,6 +136,10 @@ def get_queue(Verbose=True):
         status = {}
         for p, pfile in enumerate(Q[JobID]):
             pinfo = pickle.load(open(pfile, 'rb'))
+            if 'PowerID' in pinfo:
+                if pinfo['PowerID'] in powQ:
+                    pinfo['JobPart'] = float(pinfo['JobPart'])
+                    count_run += 1
             dict_append(status, pinfo['status'], pinfo['JobPart'])
             Q[JobID][p] = pinfo
 
@@ -118,7 +148,10 @@ def get_queue(Verbose=True):
                                        '-'.join(pinfo['name'])))
             print(status)
 
-    if not Verbose:
+    if Verbose:
+        print('\ntotal jobs running on power: {}\n'.format(len(powQ)) +
+              'known running jobs: {}/{}'.format(count_run, count_total))
+    else:
         return Q
 
 
