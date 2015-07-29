@@ -101,13 +101,13 @@ def parse_qstat(text):
     print('\n')
     for line in text.splitlines():
         print(line)
-        hit = re.match('([\w.]*) = ([\w\s:]*)', line.strip())
+        hit = re.match('([\w.]*) = ([\w\s:_\-/]*)', line.strip())
         if hit is not None:
             JobInfo[hit.group(1)] = hit.group(2)
     return JobInfo
 
 
-def get_qstat():
+def get_qstat(JobID=JobID):
     if JobID is None:
         print('not running on a power node')
         return {}
