@@ -32,6 +32,9 @@ QFile = '../jobs/job_queue.pickle'
 
 
 def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1'):
+    if not running_on_power:
+        print('submit_jobs: not running on power.')
+        return
     DefResource = {'mem': '6gb', 'pmem': '6gb', 'vmem': '12gb',
                    'pvmem': '12gb', 'cput': '04:59:00'}
     JobDir = os.path.abspath(JobDir) + '/'
@@ -60,7 +63,8 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1'):
     else:
         isGlobalPriority = False
 
-    count = 0
+    count_in_queue = len(get_power_queue())
+    count = count_in_queue
     for JobID in sorted(list(Q)):
         if count >= MaxJobs:
             break
@@ -86,7 +90,9 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1'):
                 if count >= MaxJobs:
                     break
 
-    print('submitted {} jobs'.format(count))
+    print('max: {}\nin queue: {}\nsubmitted: {} jobs'.format(MaxJobs,
+          count_in_queue,
+          count - count_in_queue))
 
 
 def parse_qstat(text):
@@ -119,7 +125,7 @@ def get_power_queue():
         job = re.match('(\d+).power', line)
         if job:
             line = re.split('\s+', line)
-            Q[job.group(1)] = line[3]
+            Q[job.group(1)] = [line[3], line[9]]
     return Q
 
 
@@ -128,6 +134,9 @@ def get_queue(Verbose=True):
     Q = pickle.load(open(QFile, 'rb'))
     count_total = sum([len(j) for j in Q.values()])
     powQ = get_power_queue()
+    powQ = {j: status[1] for j, status in powQ.items() if status[1] == 'R'}
+
+    missing = {}  # submitted but not running
     count_run = 0
     for JobID in sorted(list(Q)):
         if len(Q[JobID]) == 0:
@@ -138,8 +147,10 @@ def get_queue(Verbose=True):
             pinfo = pickle.load(open(pfile, 'rb'))
             if 'PowerID' in pinfo:
                 if pinfo['PowerID'] in powQ:
-                    pinfo['JobPart'] = float(pinfo['JobPart'])
+                    pinfo['JobPart'] = str(pinfo['JobPart']) + '*'
                     count_run += 1
+                elif pinfo['status'] == 'submit':
+                    dict_append(missing, JobID, pinfo['JobPart'])
             dict_append(status, pinfo['status'], pinfo['JobPart'])
             Q[JobID][p] = pinfo
 
@@ -149,6 +160,7 @@ def get_queue(Verbose=True):
             print(status)
 
     if Verbose:
+        print('\nmissing jobs: {}'.format(missing))
         print('\ntotal jobs running on power: {}\n'.format(len(powQ)) +
               'known running jobs: {}/{}'.format(count_run, count_total))
     else:
