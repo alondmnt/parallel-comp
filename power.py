@@ -31,10 +31,15 @@ else:
 QFile = '../jobs/job_queue.pickle'
 
 
-def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1'):
+def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1', MinPrior=0):
     if not running_on_power:
         print('submit_jobs: not running on power.')
         return
+    if JobID is not None:
+        if get_qstat()['queue'] == 'nano4':
+            print('submit_jobs: cannot submit from nano4.')
+            return
+
     DefResource = {'mem': '6gb', 'pmem': '6gb', 'vmem': '12gb',
                    'pvmem': '12gb', 'cput': '04:59:00'}
     JobDir = os.path.abspath(JobDir) + '/'
@@ -58,6 +63,10 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1'):
                                   p['status'] == 'submit'])
                     for j in list(Q)}
     max_priority = max(job_priority.values())
+    if max_priority < MinPrior:
+        print('submit_jobs: no job satisfying given min-priority ({}).'.format(
+              MinPrior))
+        return
     if max_priority >= 100:
         isGlobalPriority = True
     else:
@@ -65,15 +74,17 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1'):
 
     count_in_queue = len(get_power_queue())
     count = count_in_queue
-    for JobID in sorted(list(Q)):
+    for j in sorted(list(Q)):
         if count >= MaxJobs:
             break
-        if isGlobalPriority and job_priority[JobID] < max_priority:
+        if job_priority[j] < MinPrior:
             continue
-        if len(Q[JobID]) == 0:
+        if isGlobalPriority and job_priority[j] < max_priority:
             continue
-        for part in Q[JobID]:
-            if part['priority'] < job_priority[JobID]:
+        if len(Q[j]) == 0:
+            continue
+        for part in Q[j]:
+            if part['priority'] < job_priority[j]:
                 continue
             if (part['status'] == 'init'):
                 print('submiting:\t{}'.format(part['script']))
@@ -90,7 +101,7 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1'):
                 if count >= MaxJobs:
                     break
 
-    print('max: {}\nin queue: {}\nsubmitted: {} jobs'.format(MaxJobs,
+    print('max jobs: {}\nin queue: {}\nsubmitted: {}'.format(MaxJobs,
           count_in_queue,
           count - count_in_queue))
 
@@ -98,9 +109,9 @@ def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1'):
 def parse_qstat(text):
     JobInfo = {}
     text = text.decode('utf-8')
-    print('\n')
+#    print('\n')
     for line in text.splitlines():
-        print(line)
+#        print(line)
         hit = re.match('([\w.]*) = ([\w\s:_\-/]*)', line.strip())
         if hit is not None:
             JobInfo[hit.group(1)] = hit.group(2)
