@@ -12,14 +12,14 @@ import pickle
 
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on power
-    JobID = os.environ['PBS_JOBID'].split('.')[0]
+    PowerID = os.environ['PBS_JOBID'].split('.')[0]
 else:
-    JobID = None
+    PowerID = None
 if 'HOSTNAME' in os.environ:
     hostname = os.environ['HOSTNAME']
 else:
     hostname = None
-if (JobID is not None) or (hostname == 'power.tau.ac.il'):
+if (PowerID is not None) or (hostname == 'power.tau.ac.il'):
     running_on_power = True
 else:
     running_on_power = False
@@ -29,13 +29,14 @@ if os.name == 'posix':
 else:
     DrivePath = 'T:/'
 QFile = '../jobs/job_queue.pickle'
+JobDir = '../jobs/'
 
 
-def submit_jobs(MaxJobs=1, JobDir='../jobs/', PowerQ='tamirs1', MinPrior=0):
+def submit_jobs(MaxJobs=50, JobDir='../jobs/', PowerQ='tamirs1', MinPrior=0):
     if not running_on_power:
         print('submit_jobs: not running on power.')
         return
-    if JobID is not None:
+    if PowerID is not None:
         if get_qstat()['queue'] == 'nano4':
             print('submit_jobs: cannot submit from nano4.')
             return
@@ -118,7 +119,7 @@ def parse_qstat(text):
     return JobInfo
 
 
-def get_qstat(JobID=JobID):
+def get_qstat(JobID=PowerID):
     if JobID is None:
         print('not running on a power node')
         return {}
@@ -195,6 +196,11 @@ def get_part_info(JobID, JobPart):
 def update_part(PartInfo):
     # updates the specific part's local job file (not global queue)
     pickle.dump(PartInfo, open(PartInfo['jobfile'], 'wb'))
+
+
+def update_job(JobInfo):
+    for p in JobInfo:
+        update_part(p)
 
 
 def set_part_status(JobID, JobPart, NewStatus='init', Unless=''):
