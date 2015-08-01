@@ -30,9 +30,10 @@ else:
     DrivePath = 'T:/'
 QFile = '../jobs/job_queue.pickle'
 JobDir = '../jobs/'
+PowerQ = 'tamirs1'
 
 
-def submit_jobs(MaxJobs=50, JobDir='../jobs/', PowerQ='tamirs1', MinPrior=0):
+def submit_jobs(MaxJobs=50, MinPrior=0):
     if not running_on_power:
         print('submit_jobs: not running on power.')
         return
@@ -41,13 +42,6 @@ def submit_jobs(MaxJobs=50, JobDir='../jobs/', PowerQ='tamirs1', MinPrior=0):
             print('submit_jobs: cannot submit from nano4.')
             return
 
-    DefResource = {'mem': '6gb', 'pmem': '6gb', 'vmem': '12gb',
-                   'pvmem': '12gb', 'cput': '04:59:00'}
-    JobDir = os.path.abspath(JobDir) + '/'
-    ErrDir = JobDir + 'logs/err'
-    OutDir = JobDir + 'logs/out'
-
-    Qsub = ['qsub', '-q', PowerQ, '-e', ErrDir, '-o', OutDir, '-l']
     Q = get_queue(Verbose=False)
 
     """
@@ -84,27 +78,55 @@ def submit_jobs(MaxJobs=50, JobDir='../jobs/', PowerQ='tamirs1', MinPrior=0):
             continue
         if len(Q[j]) == 0:
             continue
-        for part in Q[j]:
-            if part['priority'] < job_priority[j]:
-                continue
-            if (part['status'] == 'init'):
-                print('submiting:\t{}'.format(part['script']))
-                if 'resources' in part:
-                    this_res = part['resources']
-                else:
-                    this_res = DefResource
-                this_sub = Qsub + [','.join(['{}={}'.format(k, v)
-                                   for k, v in sorted(this_res.items())])]
-                subprocess.call(this_sub + [part['script']])
-                part['status'] = 'submit'
-                update_part(part)  # updates local job file
-                count += 1
-                if count >= MaxJobs:
-                    break
+        count = submit_one_job(j, count, MaxJobs)
 
     print('max jobs: {}\nin queue: {}\nsubmitted: {}'.format(MaxJobs,
           count_in_queue,
           count - count_in_queue))
+
+
+def submit_one_job(JobID, SubCount=0, MaxJobs=1e6):
+    JobInfo = get_job_info(JobID)
+    job_priority = max([0] + [p['priority'] for p in JobInfo
+                              if p['status'] == 'init' or
+                              p['status'] == 'submit'])
+    for part in JobInfo:
+        if part['priority'] < job_priority:
+            continue
+        if part['status'] == 'init':
+            submit_one_part(JobID, part['JobPart'])
+            SubCount += 1
+            if SubCount >= MaxJobs:
+                break
+    return SubCount
+
+
+def submit_one_part(JobID, JobPart):
+    DefResource = {'mem': '6gb', 'pmem': '6gb', 'vmem': '12gb',
+                   'pvmem': '12gb', 'cput': '04:59:00'}
+
+    global JobDir
+    global PowerQ
+
+    JobDir = os.path.abspath(JobDir) + '/'
+    ErrDir = JobDir + 'logs/err'
+    OutDir = JobDir + 'logs/out'
+
+    Qsub = ['qsub', '-q', PowerQ, '-e', ErrDir, '-o', OutDir, '-l']
+
+    part = get_part_info(JobID, JobPart)
+    print('submiting:\t{}'.format(part['script']))
+    if part['status'] != 'init':
+        Warning('already submitted')
+    if 'resources' in part:
+        this_res = part['resources']
+    else:
+        this_res = DefResource
+    this_sub = Qsub + [','.join(['{}={}'.format(k, v)
+                       for k, v in sorted(this_res.items())])]
+    subprocess.call(this_sub + [part['script']])
+    part['status'] = 'submit'
+    update_part(part)
 
 
 def parse_qstat(text):
@@ -203,19 +225,23 @@ def update_job(JobInfo):
         update_part(p)
 
 
-def set_part_status(JobID, JobPart, NewStatus='init', Unless=''):
-    try:
-        test = iter(Unless)
-    except:
-        Unless = [Unless]
+def set_part_field(JobID, JobPart, Fields={'status': 'init'},
+                   Unless={'status': ['complete', 'collected']}):
     part = get_part_info(JobID, JobPart)
-    if part['status'] in Unless:
-        return
-    part['status'] = NewStatus
+    for k, v in Fields.items():
+        if k in Unless:
+            try:
+                test = iter(Unless[k])
+            except:
+                Unless[k] = [Unless[k]]
+            if part[k] in Unless[k]:
+                continue
+        part[k] = v
     update_part(part)
 
 
-def set_job_status(JobID, NewStatus='init', Unless=''):
+def set_job_field(JobID, Fields={'status': 'init'},
+                  Unless={'status': ['complete', 'collected']}):
     # updates the specific parts' local job files (not global queue)
     try:
         test = iter(JobID)
@@ -224,7 +250,7 @@ def set_job_status(JobID, NewStatus='init', Unless=''):
     Q = pickle.load(open(QFile, 'rb'))
     for j in JobID:
         for part in range(len(Q[j])):
-            set_part_status(j, part, NewStatus, Unless)
+            set_part_field(j, part, Fields, Unless)
 
 
 def dict_append(dictionary, key, value):
