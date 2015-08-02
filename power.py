@@ -34,7 +34,7 @@ JobDir = '../jobs/'
 PowerQ = 'tamirs1'
 
 
-def submit_jobs(MaxJobs=100, MinPrior=0):
+def submit_jobs(MaxJobs=150, MinPrior=0):
     if not running_on_power:
         print('submit_jobs: not running on power.')
         return
@@ -47,6 +47,11 @@ def submit_jobs(MaxJobs=100, MinPrior=0):
         return
     else:
         flag_file = open(JobDir + 'submitting', 'w')
+    try:
+        with open(JobDir + 'maxjobs', 'r') as fid:
+            MaxJobs = int(fid.readline())
+    except:
+        pass
 
     Q = get_queue(Verbose=False)
 
