@@ -9,6 +9,7 @@ import re
 import os
 import subprocess
 import pickle
+import shutil
 
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on power
@@ -33,7 +34,7 @@ JobDir = '../jobs/'
 PowerQ = 'tamirs1'
 
 
-def submit_jobs(MaxJobs=50, MinPrior=0):
+def submit_jobs(MaxJobs=100, MinPrior=0):
     if not running_on_power:
         print('submit_jobs: not running on power.')
         return
@@ -41,6 +42,11 @@ def submit_jobs(MaxJobs=50, MinPrior=0):
         if get_qstat()['queue'] == 'nano4':
             print('submit_jobs: cannot submit from nano4.')
             return
+    if os.path.isfile(JobDir + 'submitting'):
+        print('already submitting jobs.')
+        return
+    else:
+        flag_file = open(JobDir + 'submitting', 'w')
 
     Q = get_queue(Verbose=False)
 
@@ -80,6 +86,8 @@ def submit_jobs(MaxJobs=50, MinPrior=0):
             continue
         count = submit_one_job(j, count, MaxJobs)
 
+    flag_file.close()
+    os.remove(JobDir + 'submitting')
     print('max jobs: {}\nin queue: {}\nsubmitted: {}'.format(MaxJobs,
           count_in_queue,
           count - count_in_queue))
@@ -114,19 +122,25 @@ def submit_one_part(JobID, JobPart):
 
     Qsub = ['qsub', '-q', PowerQ, '-e', ErrDir, '-o', OutDir, '-l']
 
-    part = get_part_info(JobID, JobPart)
-    print('submiting:\t{}'.format(part['script']))
-    if part['status'] != 'init':
-        Warning('already submitted')
-    if 'resources' in part:
-        this_res = part['resources']
-    else:
-        this_res = DefResource
-    this_sub = Qsub + [','.join(['{}={}'.format(k, v)
-                       for k, v in sorted(this_res.items())])]
-    subprocess.call(this_sub + [part['script']])
-    part['status'] = 'submit'
-    update_part(part)
+    try:
+        test = iter(JobPart)
+    except:
+        JobPart = [JobPart]
+
+    for p in JobPart:
+        part = get_part_info(JobID, p)
+        print('submiting:\t{}'.format(part['script']))
+        if part['status'] != 'init':
+            Warning('already submitted')
+        if 'resources' in part:
+            this_res = part['resources']
+        else:
+            this_res = DefResource
+        this_sub = Qsub + [','.join(['{}={}'.format(k, v)
+                           for k, v in sorted(this_res.items())])]
+        subprocess.call(this_sub + [part['script']])
+        part['status'] = 'submit'
+        update_part(part)
 
 
 def parse_qstat(text):
@@ -251,6 +265,37 @@ def set_job_field(JobID, Fields={'status': 'init'},
     for j in JobID:
         for part in range(len(Q[j])):
             set_part_field(j, part, Fields, Unless)
+
+
+def recover_queue():
+    Q = {}
+    for dirpath, dirnames, filenames in os.walk(JobDir):
+        jid = os.path.basename(dirpath)
+        if not jid.isnumeric():
+            continue
+        jid = int(jid)
+        for f in filenames:
+            if f.find('info_') >= 0:
+                dict_append(Q, jid, dirpath + '/' + f)
+    pickle.dump(Q, open(QFile, 'wb'))
+
+
+def remove_job(JobID):
+    WorkDir = JobDir + str(JobID)
+    if os.path.isdir(WorkDir):
+        shutil.rmtree(WorkDir)
+    Q = pickle.load(open(QFile, 'rb'))
+    if JobID in Q:
+        del Q[JobID]
+    Q = pickle.dump(Q, open(QFile, 'wb'))
+
+
+def clear_collected():
+    Q = get_queue(Verbose=False)
+    for JobID in Q.keys():
+        if all([True if p['status'] == 'collected' else False
+                for p in Q[JobID]]):
+            remove_job(JobID)
 
 
 def dict_append(dictionary, key, value):
