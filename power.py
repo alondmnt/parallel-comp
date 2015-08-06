@@ -10,6 +10,7 @@ import os
 import subprocess
 import pickle
 import shutil
+from copy import deepcopy
 
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on power
@@ -98,19 +99,30 @@ def submit_jobs(MaxJobs=150, MinPrior=0):
           count - count_in_queue))
 
 
+def make_iter(var):
+    if type(var) == str:
+        var = [var]
+    try:
+        test = iter(var)
+    except:
+        var = [var]
+    return var
+
+
 def submit_one_job(JobID, SubCount=0, MaxJobs=1e6):
-    JobInfo = get_job_info(JobID)
-    job_priority = max([0] + [p['priority'] for p in JobInfo
-                              if p['status'] == 'init' or
-                              p['status'] == 'submit'])
-    for part in JobInfo:
-        if part['priority'] < job_priority:
-            continue
-        if part['status'] == 'init':
-            submit_one_part(JobID, part['JobPart'])
-            SubCount += 1
-            if SubCount >= MaxJobs:
-                break
+    for j in make_iter(JobID):
+        JobInfo = get_job_info(j)
+        job_priority = max([0] + [p['priority'] for p in JobInfo
+                                  if p['status'] == 'init' or
+                                  p['status'] == 'submit'])
+        for part in JobInfo:
+            if part['priority'] < job_priority:
+                continue
+            if part['status'] == 'init':
+                submit_one_part(j, part['JobPart'])
+                SubCount += 1
+                if SubCount >= MaxJobs:
+                    break
     return SubCount
 
 
@@ -122,17 +134,14 @@ def submit_one_part(JobID, JobPart):
     global PowerQ
 
     JobDir = os.path.abspath(JobDir) + '/'
-    ErrDir = JobDir + 'logs/err'
-    OutDir = JobDir + 'logs/out'
+    ErrDir = JobDir + '{}/logs/'.format(JobID)
+    OutDir = JobDir + '{}/logs/'.format(JobID)
+    if not os.path.isdir(ErrDir):
+        os.makedirs(ErrDir)
 
     Qsub = ['qsub', '-q', PowerQ, '-e', ErrDir, '-o', OutDir, '-l']
 
-    try:
-        test = iter(JobPart)
-    except:
-        JobPart = [JobPart]
-
-    for p in JobPart:
+    for p in make_iter(JobPart):
         part = get_part_info(JobID, p)
         print('submiting:\t{}'.format(part['script']))
         if part['status'] != 'init':
@@ -189,14 +198,15 @@ def get_queue(Verbose=True):
     powQ = get_power_queue()
     powQ = {j: status[1] for j, status in powQ.items() if status[1] == 'R'}
 
+    Qout = deepcopy(Q)
     missing = {}  # submitted but not running
     count_run = 0
     for JobID in sorted(list(Q)):
-        if len(Q[JobID]) == 0:
-            continue
-
         status = {}
+        processed_part = []
         for p, pfile in enumerate(Q[JobID]):
+            if not os.path.isfile(pfile):
+                continue
             pinfo = pickle.load(open(pfile, 'rb'))
             if 'PowerID' in pinfo:
                 if pinfo['PowerID'] in powQ:
@@ -205,7 +215,16 @@ def get_queue(Verbose=True):
                 elif pinfo['status'] == 'submit':
                     dict_append(missing, JobID, pinfo['JobPart'])
             dict_append(status, pinfo['status'], pinfo['JobPart'])
-            Q[JobID][p] = pinfo
+            Qout[JobID][p] = pinfo
+            processed_part.append(p)
+
+        Q[JobID] = [Q[JobID][p] for p in processed_part]
+        Qout[JobID] = [Qout[JobID][p] for p in processed_part]
+
+        if len(Q[JobID]) == 0:
+            del Q[JobID]
+            del Qout[JobID]
+            continue
 
         if Verbose:
             print('\n{}: {}/{}'.format(JobID, pinfo['organism'],
@@ -217,7 +236,7 @@ def get_queue(Verbose=True):
         print('\ntotal jobs running on power: {}\n'.format(len(powQ)) +
               'known running jobs: {}/{}'.format(count_run, count_total))
     else:
-        return Q
+        return Qout
 
 
 def get_job_info(JobID):
@@ -246,28 +265,21 @@ def update_job(JobInfo):
 
 def set_part_field(JobID, JobPart, Fields={'status': 'init'},
                    Unless={'status': ['complete', 'collected']}):
-    part = get_part_info(JobID, JobPart)
-    for k, v in Fields.items():
-        if k in Unless:
-            try:
-                test = iter(Unless[k])
-            except:
-                Unless[k] = [Unless[k]]
-            if part[k] in Unless[k]:
-                continue
-        part[k] = v
-    update_part(part)
+    for p in make_iter(JobPart):
+        part = get_part_info(JobID, p)
+        for k, v in Fields.items():
+            if k in Unless:
+                if part[k] in make_iter(Unless[k]):
+                    continue
+            part[k] = v
+        update_part(part)
 
 
 def set_job_field(JobID, Fields={'status': 'init'},
                   Unless={'status': ['complete', 'collected']}):
     # updates the specific parts' local job files (not global queue)
-    try:
-        test = iter(JobID)
-    except:
-        JobID = [JobID]
     Q = pickle.load(open(QFile, 'rb'))
-    for j in JobID:
+    for j in make_iter(JobID):
         for part in range(len(Q[j])):
             set_part_field(j, part, Fields, Unless)
 
