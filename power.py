@@ -8,6 +8,7 @@ Created on Wed Mar 18 22:45:50 2015
 import re
 import os
 import subprocess
+import time
 import pickle
 import shutil
 from copy import deepcopy
@@ -43,11 +44,16 @@ def submit_jobs(MaxJobs=150, MinPrior=0):
         if get_qstat()['queue'] == 'nano4':
             print('submit_jobs: cannot submit from nano4.')
             return
-    if os.path.isfile(JobDir + 'submitting'):
-        print('already submitting jobs.')
-        return
-    else:
-        flag_file = open(JobDir + 'submitting', 'w')
+    busy_flag = JobDir + 'submitting'
+    if os.path.isfile(busy_flag):
+        sec_since_submit = time.time() - \
+                os.path.getmtime(JobDir + 'submitting')  #
+        if sec_since_submit > 300:
+            os.remove(busy_flag)
+        else:
+            print('already submitting jobs.')
+            return
+    flag_file = open(JobDir + 'submitting', 'w')
     try:
         with open(JobDir + 'maxjobs', 'r') as fid:
             MaxJobs = int(fid.readline())
@@ -93,7 +99,7 @@ def submit_jobs(MaxJobs=150, MinPrior=0):
         count = submit_one_job(j, count, MaxJobs)
 
     flag_file.close()
-    os.remove(JobDir + 'submitting')
+    os.remove(busy_flag)
     print('max jobs: {}\nin queue: {}\nsubmitted: {}'.format(MaxJobs,
           count_in_queue,
           count - count_in_queue))
@@ -298,13 +304,14 @@ def recover_queue():
 
 
 def remove_job(JobID):
-    WorkDir = JobDir + str(JobID)
-    if os.path.isdir(WorkDir):
-        shutil.rmtree(WorkDir)
-    Q = pickle.load(open(QFile, 'rb'))
-    if JobID in Q:
-        del Q[JobID]
-    Q = pickle.dump(Q, open(QFile, 'wb'))
+    for j in make_iter(JobID):
+        WorkDir = JobDir + str(j)
+        if os.path.isdir(WorkDir):
+            shutil.rmtree(WorkDir)
+        Q = pickle.load(open(QFile, 'rb'))
+        if j in Q:
+            del Q[j]
+        Q = pickle.dump(Q, open(QFile, 'wb'))
 
 
 def clear_collected():
@@ -319,3 +326,12 @@ def dict_append(dictionary, key, value):
     if key not in dictionary:
         dictionary[key] = []
     dictionary[key].append(value)
+
+
+def boost_job_priority(JobID, Booster=100):
+    Q = pickle.load(open(QFile, 'rb'))
+    for j in make_iter(JobID):
+        for p in Q[j]:
+            part = pickle.load(open(p, 'rb'))
+            part['priority'] += Booster
+            update_part(part)
