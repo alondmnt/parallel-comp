@@ -11,6 +11,7 @@ import subprocess
 import time
 import pickle
 import shutil
+from collections import Counter
 from copy import deepcopy
 
 if 'PBS_JOBID' in os.environ:
@@ -160,6 +161,11 @@ def submit_one_part(JobID, JobPart):
                            for k, v in sorted(this_res.items())])]
         subprocess.call(this_sub + [part['script']])
         part['status'] = 'submit'
+        part['subtime'] = time.time()
+        if 'PowerID' in part:
+            del part['PowerID']
+        if 'qstat' in part:
+            del part['qstat']
         update_part(part)
 
 
@@ -197,16 +203,16 @@ def get_power_queue():
     return Q
 
 
-def get_queue(Verbose=True):
+def get_queue(Verbose=True, SubmitMissing=False, Display=None):
     # reads from global job queue file
     Q = pickle.load(open(QFile, 'rb'))
-    count_total = sum([len(j) for j in Q.values()])
+    curr_time = time.time()
     powQ = get_power_queue()
-    powQ = {j: status[1] for j, status in powQ.items() if status[1] == 'R'}
+#    powQ = {j: status[1] for j, status in powQ.items() if status[1] == 'R'}
 
     Qout = deepcopy(Q)
     missing = {}  # submitted but not running
-    count_run = 0
+    cnt = Counter()
     for JobID in sorted(list(Q)):
         status = {}
         processed_part = []
@@ -214,12 +220,16 @@ def get_queue(Verbose=True):
             if not os.path.isfile(pfile):
                 continue
             pinfo = pickle.load(open(pfile, 'rb'))
+            cnt['total'] += 1
             if 'PowerID' in pinfo:
                 if pinfo['PowerID'] in powQ:
-                    pinfo['JobPart'] = str(pinfo['JobPart']) + '*'
-                    count_run += 1
-                elif pinfo['status'] == 'submit':
-                    dict_append(missing, JobID, pinfo['JobPart'])
+                    if powQ[pinfo['PowerID']][1] == 'R':
+                        pinfo['JobPart'] = str(pinfo['JobPart']) + '*'
+                        cnt['run'] += 1
+                elif pinfo['status'] == 'submit' and 'subtime' in pinfo:
+                    if pinfo['subtime'] < curr_time:
+                        dict_append(missing, JobID, pinfo['JobPart'])
+            cnt[pinfo['status']] += 1
             dict_append(status, pinfo['status'], pinfo['JobPart'])
             Qout[JobID][p] = pinfo
             processed_part.append(p)
@@ -233,14 +243,26 @@ def get_queue(Verbose=True):
             continue
 
         if Verbose:
-            print('\n{}: {}/{}'.format(JobID, pinfo['organism'],
-                                       '-'.join(pinfo['name'])))
-            print(status)
+            if Display is not None:
+                status = {s: p for s, p in status.items() if s in Display}
+            if len(status) > 0:
+                print('\n{}: {}/{}'.format(JobID, pinfo['organism'],
+                                           '-'.join(pinfo['name'])))
+                print(status)
+
+    if SubmitMissing:
+        for JobID in missing:
+            for JobPart in missing[JobID]:
+                PartDir = JobDir + '{}/{}'.format(JobID, JobPart)
+                if os.path.isdir(PartDir):
+                    shutil.rmtree(PartDir)
+                set_part_field(JobID, JobPart, {'status': 'init'})
 
     if Verbose:
         print('\nmissing jobs: {}'.format(missing))
-        print('\ntotal jobs running on power: {}\n'.format(len(powQ)) +
-              'known running jobs: {}/{}'.format(count_run, count_total))
+        cnt['complete'] += cnt['collected']
+        print('\ntotal jobs on power queue: {}\n'.format(len(powQ)) +
+              'running/complete/total: {run}/{complete}/{total}'.format(**cnt))
     else:
         return Qout
 
