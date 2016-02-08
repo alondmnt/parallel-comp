@@ -31,7 +31,7 @@ else:
 if os.name == 'posix':
     DrivePath = '/tamir1/dalon/'
 else:
-    DrivePath = 'T:/'
+    DrivePath = 'T:/dalon/'
 QFile = '../jobs/job_queue.pickle'
 JobDir = '../jobs/'
 PowerQ = 'tamirs1'
@@ -274,7 +274,7 @@ def get_job_info(JobID):
 
 def get_job_file(JobID, JobPart):
     Q = pickle.load(open(QFile, 'rb'))
-    return Q[JobID][JobPart]
+    return Q[JobID][JobPart].replace('/tamir1/dalon/', DrivePath)
 
 
 def get_part_info(JobID, JobPart):
