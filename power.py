@@ -37,12 +37,12 @@ JobDir = '../jobs/'
 PowerQ = 'tamirs1'
 
 
-def submit_jobs(MaxJobs=150, MinPrior=0):
-    if not running_on_power:
+def submit_jobs(MaxJobs=150, MinPrior=0, OutFile=None):
+    if not running_on_power and not OutFile:
         print('submit_jobs: not running on power.')
         return
     if PowerID is not None:
-        if get_qstat()['queue'] == 'nano4':
+        if get_qstat()['queue'] == 'nano4' and not OutFile:
             print('submit_jobs: cannot submit from nano4.')
             return
     busy_flag = JobDir + 'submitting'
@@ -60,6 +60,12 @@ def submit_jobs(MaxJobs=150, MinPrior=0):
             MaxJobs = int(fid.readline())
     except:
         pass
+
+    if OutFile:
+        out_file = open(OutFile, 'w')
+        out_file.write('#!/bin/bash\n')
+    else:
+        out_file = None
 
     Q = get_queue(Verbose=False)
 
@@ -97,9 +103,12 @@ def submit_jobs(MaxJobs=150, MinPrior=0):
             continue
         if len(Q[j]) == 0:
             continue
-        count = submit_one_job(j, count, MaxJobs)
+        count = submit_one_job(j, count, MaxJobs, OutFile=out_file)
 
     flag_file.close()
+    if OutFile:
+        out_file.close()
+        os.chmod(OutFile, 0o744)
     os.remove(busy_flag)
     print('max jobs: {}\nin queue: {}\nsubmitted: {}'.format(MaxJobs,
           count_in_queue,
@@ -116,7 +125,7 @@ def make_iter(var):
     return var
 
 
-def submit_one_job(JobID, SubCount=0, MaxJobs=1e6):
+def submit_one_job(JobID, SubCount=0, MaxJobs=1e6, OutFile=None):
     for j in make_iter(JobID):
         JobInfo = get_job_info(j)
         job_priority = max([0] + [p['priority'] for p in JobInfo
@@ -126,14 +135,14 @@ def submit_one_job(JobID, SubCount=0, MaxJobs=1e6):
             if part['priority'] < job_priority:
                 continue
             if part['status'] == 'init':
-                submit_one_part(j, part['JobPart'])
+                submit_one_part(j, part['JobPart'], OutFile)
                 SubCount += 1
                 if SubCount >= MaxJobs:
                     break
     return SubCount
 
 
-def submit_one_part(JobID, JobPart):
+def submit_one_part(JobID, JobPart, OutFile=None):
     DefResource = {'mem': '6gb', 'pmem': '6gb', 'vmem': '12gb',
                    'pvmem': '12gb', 'cput': '04:59:00'}
 
@@ -159,7 +168,11 @@ def submit_one_part(JobID, JobPart):
             this_res = DefResource
         this_sub = Qsub + [','.join(['{}={}'.format(k, v)
                            for k, v in sorted(this_res.items())])]
-        subprocess.call(this_sub + [part['script']])
+        if OutFile:
+            OutFile.write(' '.join(this_sub + [part['script']]) + '\n')
+        else:
+            subprocess.call(this_sub + [part['script']])
+
         part['status'] = 'submit'
         part['subtime'] = time.time()
         if 'PowerID' in part:
