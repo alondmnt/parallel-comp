@@ -344,6 +344,21 @@ def clear_collected():
             remove_job(JobID)
 
 
+def clean_temp_folders():
+    """ clean RP mapping folders from temp files, that are sometimes left
+        when jobs get stuck. """
+    Q = get_queue(Verbose=False)
+    rmv_list = []
+    for JobID in Q.keys():
+        for part in Q[JobID]:
+            tempdir = JobDir + '{}/{}'.format(JobID, part['JobPart'])
+            if os.path.exists(tempdir):
+                shutil.rmtree(tempdir)
+                rmv_list.append(tempdir)
+    print('removed {} temp dirs'.format(len(rmv_list)))
+    return rmv_list
+
+
 def dict_append(dictionary, key, value):
     if key not in dictionary:
         dictionary[key] = []
