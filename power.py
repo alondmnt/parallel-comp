@@ -292,7 +292,8 @@ def update_job(JobInfo):
 
 
 def set_part_field(JobID, JobPart, Fields={'status': 'init'},
-                   Unless={'status': ['complete', 'collected']}):
+                   Unless={'status': ['complete', 'collected'],
+                           'func': 'build_genome'}):
     for p in make_iter(JobPart):
         part = get_part_info(JobID, p)
         for k, v in Fields.items():
@@ -304,7 +305,8 @@ def set_part_field(JobID, JobPart, Fields={'status': 'init'},
 
 
 def set_job_field(JobID, Fields={'status': 'init'},
-                  Unless={'status': ['complete', 'collected']}):
+                  Unless={'status': ['complete', 'collected'],
+                          'func': 'build_genome'}):
     # updates the specific parts' local job files (not global queue)
     Q = pickle.load(open(QFile, 'rb'))
     for j in make_iter(JobID):
