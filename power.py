@@ -34,7 +34,7 @@ else:
     DrivePath = 'T:/dalon/'
 QFile = '../jobs/job_queue.pickle'
 JobDir = '../jobs/'
-PowerQ = 'tamirs1'
+PowerQ = 'tamirs2'
 
 
 def submit_jobs(MaxJobs=150, MinPrior=0):
