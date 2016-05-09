@@ -37,7 +37,7 @@ JobDir = '../jobs/'
 PowerQ = 'tamirs2'
 
 
-def submit_jobs(MaxJobs=150, MinPrior=0):
+def submit_jobs(MaxJobs=None, MinPrior=0):
     if not running_on_power:
         print('submit_jobs: not running on power.')
         return
@@ -48,18 +48,19 @@ def submit_jobs(MaxJobs=150, MinPrior=0):
     busy_flag = JobDir + 'submitting'
     if os.path.isfile(busy_flag):
         sec_since_submit = time.time() - \
-                os.path.getmtime(JobDir + 'submitting')  #
+                os.path.getmtime(busy_flag)  #
         if sec_since_submit > 300:
             os.remove(busy_flag)
         else:
             print('already submitting jobs.')
             return
-    flag_file = open(JobDir + 'submitting', 'w')
-    try:
-        with open(JobDir + 'maxjobs', 'r') as fid:
-            MaxJobs = int(fid.readline())
-    except:
-        pass
+    flag_file = open(busy_flag, 'w')
+    if MaxJobs is None:
+        try:
+            with open(JobDir + 'maxjobs', 'r') as fid:
+                MaxJobs = int(fid.readline())
+        except:
+            pass
 
     Q = get_queue(Verbose=False)
 
@@ -203,7 +204,7 @@ def get_power_queue():
     return Q
 
 
-def get_queue(Verbose=True, SubmitMissing=False, Display=None):
+def get_queue(Verbose=True, SubmitMissing=False, Display=None, Filter=None):
     # reads from global job queue file
     Q = pickle.load(open(QFile, 'rb'))
     curr_time = time.time()
@@ -216,10 +217,19 @@ def get_queue(Verbose=True, SubmitMissing=False, Display=None):
     for JobID in sorted(list(Q)):
         status = {}
         processed_part = []
+        skip_flag = False
         for p, pfile in enumerate(Q[JobID]):
             if not os.path.isfile(pfile):
                 continue
             pinfo = pickle.load(open(pfile, 'rb'))
+            if type(Filter) is dict:
+                for k, v in Filter.items():
+                    if k not in pinfo:
+                        continue
+                    if v not in pinfo['name']:
+                        skip_flag = True
+                if skip_flag:
+                    break
             cnt['total'] += 1
             if 'PowerID' in pinfo:
                 if pinfo['PowerID'] in powQ:
@@ -234,10 +244,14 @@ def get_queue(Verbose=True, SubmitMissing=False, Display=None):
             Qout[JobID][p] = pinfo
             processed_part.append(p)
 
+        if skip_flag:
+            continue
+
         Q[JobID] = [Q[JobID][p] for p in processed_part]
         Qout[JobID] = [Qout[JobID][p] for p in processed_part]
 
         if len(Q[JobID]) == 0:
+            print('\nempty {}'.format(JobID))
             del Q[JobID]
             del Qout[JobID]
             continue
