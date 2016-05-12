@@ -23,7 +23,7 @@ if 'HOSTNAME' in os.environ:
     hostname = os.environ['HOSTNAME']
 else:
     hostname = None
-if (PowerID is not None) or (hostname == 'power.tau.ac.il'):
+if (PowerID is not None) or ('tau.ac.il' in hostname):
     running_on_power = True
 else:
     running_on_power = False
@@ -223,11 +223,13 @@ def get_queue(Verbose=True, SubmitMissing=False, Display=None, Filter=None):
                 continue
             pinfo = pickle.load(open(pfile, 'rb'))
             if type(Filter) is dict:
+                skip_flag = True
                 for k, v in Filter.items():
                     if k not in pinfo:
                         continue
-                    if v not in pinfo['name']:
-                        skip_flag = True
+                    for n in make_iter(pinfo[k]):
+                        if v in n:
+                            skip_flag = False
                 if skip_flag:
                     break
             cnt['total'] += 1
