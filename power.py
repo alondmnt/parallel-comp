@@ -22,7 +22,7 @@ else:
 if 'HOSTNAME' in os.environ:
     hostname = os.environ['HOSTNAME']
 else:
-    hostname = None
+    hostname = []
 if (PowerID is not None) or ('tau.ac.il' in hostname):
     running_on_power = True
 else:
