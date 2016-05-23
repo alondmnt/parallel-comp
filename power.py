@@ -11,6 +11,8 @@ import subprocess
 import time
 import pickle
 import shutil
+import warnings
+from numpy.random import randint
 from collections import Counter
 from copy import deepcopy
 
@@ -37,7 +39,7 @@ JobDir = '../jobs/'
 PowerQ = 'tamirs2'
 
 
-def submit_jobs(MaxJobs=None, MinPrior=0):
+def submit_jobs(MaxJobs=None, MinPrior=0, Filter=None):
     if not running_on_power:
         print('submit_jobs: not running on power.')
         return
@@ -62,7 +64,7 @@ def submit_jobs(MaxJobs=None, MinPrior=0):
         except:
             pass
 
-    Q = get_queue(Verbose=False)
+    Q = get_queue(Verbose=False, Filter=Filter)
 
     """
     JOB/PART PRIORITY RULES
@@ -74,8 +76,8 @@ def submit_jobs(MaxJobs=None, MinPrior=0):
        is given only when priorities are above 100.
     """
     job_priority = {j: max([0] + [p['priority'] for p in Q[j]
-                                  if p['status'] == 'init' or
-                                  p['status'] == 'submit'])
+                                  if p['status'] not in
+                                  {'complete', 'collected'}])
                     for j in list(Q)}
     max_priority = max(job_priority.values())
     if max_priority < MinPrior:
@@ -121,8 +123,8 @@ def submit_one_job(JobID, SubCount=0, MaxJobs=1e6):
     for j in make_iter(JobID):
         JobInfo = get_job_info(j)
         job_priority = max([0] + [p['priority'] for p in JobInfo
-                                  if p['status'] == 'init' or
-                                  p['status'] == 'submit'])
+                                  if p['status'] not in
+                                  {'complete', 'collected'}])
         for part in JobInfo:
             if part['priority'] < job_priority:
                 continue
@@ -134,7 +136,7 @@ def submit_one_job(JobID, SubCount=0, MaxJobs=1e6):
     return SubCount
 
 
-def submit_one_part(JobID, JobPart):
+def submit_one_part(JobID, JobPart, Spawn=False):
     DefResource = {'mem': '6gb', 'pmem': '6gb', 'vmem': '12gb',
                    'pvmem': '12gb', 'cput': '04:59:00'}
 
@@ -150,10 +152,10 @@ def submit_one_part(JobID, JobPart):
     Qsub = ['qsub', '-q', PowerQ, '-e', ErrDir, '-o', OutDir, '-l']
 
     for p in make_iter(JobPart):
-        part = get_part_info(JobID, p)
+        part = get_part_info(JobID, p, HoldFile=True)
         print('submiting:\t{}'.format(part['script']))
         if part['status'] != 'init':
-            Warning('already submitted')
+            warnings.warn('already submitted')
         if 'resources' in part:
             this_res = part['resources']
         else:
@@ -161,13 +163,23 @@ def submit_one_part(JobID, JobPart):
         this_sub = Qsub + [','.join(['{}={}'.format(k, v)
                            for k, v in sorted(this_res.items())])]
         subprocess.call(this_sub + [part['script']])
-        part['status'] = 'submit'
-        part['subtime'] = time.time()
-        if 'PowerID' in part:
-            del part['PowerID']
-        if 'qstat' in part:
-            del part['qstat']
-        update_part(part)
+        if not Spawn:
+            part['status'] = 'submit'
+            part['subtime'] = time.time()
+            if 'PowerID' in part:
+                del part['PowerID']
+            if 'qstat' in part:
+                del part['qstat']
+        else:
+            if part['status'] != 'spawn':
+                # remove previous information
+                part['status'] = 'spawn'
+                part['PowerID'] = []
+                part['hostname'] = []
+                part['spawn_id'] = []
+                part['spawn_complete'] = set()
+
+        update_part(part, Release=True)
 
 
 def parse_qstat(text):
@@ -231,16 +243,19 @@ def get_queue(Verbose=True, SubmitMissing=False, Display=None, Filter=None):
                         if v in n:
                             skip_flag = False
                 if skip_flag:
+                    del Qout[JobID]
                     break
             cnt['total'] += 1
             if 'PowerID' in pinfo:
-                if pinfo['PowerID'] in powQ:
-                    if powQ[pinfo['PowerID']][1] == 'R':
-                        pinfo['JobPart'] = str(pinfo['JobPart']) + '*'
-                        cnt['run'] += 1
-                elif pinfo['status'] == 'submit' and 'subtime' in pinfo:
-                    if pinfo['subtime'] < curr_time:
-                        dict_append(missing, JobID, pinfo['JobPart'])
+                for pid in make_iter(pinfo['PowerID']):
+                    if pid in powQ:
+                        if powQ[pid][1] == 'R':
+                            pinfo['JobPart'] = str(pinfo['JobPart']) + '*'
+                            cnt['run'] += 1
+                    elif pinfo['status'] in {'submit', 'spawn'} and \
+                            'subtime' in pinfo:
+                        if pinfo['subtime'] < curr_time:
+                            dict_append(missing, JobID, pinfo['JobPart'])
             cnt[pinfo['status']] += 1
             dict_append(status, pinfo['status'], pinfo['JobPart'])
             Qout[JobID][p] = pinfo
@@ -293,12 +308,40 @@ def get_job_file(JobID, JobPart):
     return Q[JobID][JobPart].replace('/tamir1/dalon/', DrivePath)
 
 
-def get_part_info(JobID, JobPart):
-    return pickle.load(open(get_job_file(JobID, JobPart), 'rb'))
+def get_part_info(JobID, JobPart, HoldFile=False, SetID=False):
+    if SetID:
+        HoldFile = True
+    JobInfo = pickle.load(open(get_job_file(JobID, JobPart), 'rb'))
+    if 'updating_info' not in JobInfo:
+        JobInfo['updating_info'] = False
+    if HoldFile:
+        tries = 1
+        while JobInfo['updating_info']:
+            time.sleep(randint(1, 10))
+            JobInfo = pickle.load(open(get_job_file(JobID, JobPart), 'rb'))
+            tries += 1
+            if tries > 10:
+                raise Exception('cannot update job info')
+        JobInfo['updating_info'] = True
+        update_part(JobInfo)
+    if SetID:
+        if JobInfo['status'] == 'spawn':
+            JobInfo['PowerID'].append(PowerID)
+            JobInfo['hostname'].append(hostname)
+            # while the following IDs are set asynchronously, we can test if
+            # were set correctly by comparing spawn_count to length of spawn_id
+            JobInfo['spawn_id'].append(len(JobInfo['spawn_id']))
+        else:
+            JobInfo['PowerID'] = PowerID
+            JobInfo['hostname'] = hostname
+        update_part(JobInfo, Release=True)
+    return JobInfo
 
 
-def update_part(PartInfo):
+def update_part(PartInfo, Release=False):
     # updates the specific part's local job file (not global queue)
+    if Release:
+        PartInfo['updating_info'] = False
     pickle.dump(PartInfo, open(PartInfo['jobfile'], 'wb'))
 
 
@@ -309,20 +352,22 @@ def update_job(JobInfo):
 
 def set_part_field(JobID, JobPart, Fields={'status': 'init'},
                    Unless={'status': ['complete', 'collected'],
-                           'func': 'build_genome'}):
+                           'func': 'build_genome',
+                           'updating_info': True}):
     for p in make_iter(JobPart):
-        part = get_part_info(JobID, p)
+        part = get_part_info(JobID, p, HoldFile=False)
         for k, v in Fields.items():
             if k in Unless:
                 if part[k] in make_iter(Unless[k]):
                     continue
             part[k] = v
-        update_part(part)
+        update_part(part, Release=True)
 
 
 def set_job_field(JobID, Fields={'status': 'init'},
                   Unless={'status': ['complete', 'collected'],
-                          'func': 'build_genome'}):
+                          'func': 'build_genome',
+                          'updating_info': True}):
     # updates the specific parts' local job files (not global queue)
     Q = pickle.load(open(QFile, 'rb'))
     for j in make_iter(JobID):
@@ -390,3 +435,65 @@ def boost_job_priority(JobID, Booster=100):
             part = pickle.load(open(p, 'rb'))
             part['priority'] += Booster
             update_part(part)
+
+
+def spawn_submit(JobInfo, N):
+    """ run the selected job multiple times in parallel. job needs to handle
+        'spawn' status for correct logic: i.e., only last job to complete
+        updates additional fields in JobInfo. """
+    set_part_field(JobInfo['JobID'], JobInfo['JobPart'],
+                   Fields={'spawn_count': N+1}, Unless={})
+    for i in range(N):
+        time.sleep(5)  # avoid collisions
+        submit_one_part(JobInfo['JobID'], JobInfo['JobPart'], Spawn=True)
+
+    # update current job with spawn IDs
+    return get_part_info(JobInfo['JobID'], JobInfo['JobPart'], SetID=True)
+
+
+def spawn_complete(JobInfo):
+    """ signal that one spawn has ended successfully. only update done by
+        current job to JobInfo, unless all spawns completed. """
+    my_id = JobInfo['spawn_id'][-1]
+    JobInfo = get_part_info(JobInfo['JobID'], JobInfo['JobPart'], HoldFile=True)
+    if JobInfo['status'] != 'spawn':
+        # must not leave function with an ambiguous status in JobInfo
+        # e.g., if job has been re-submitted by some one/job
+        # (unknown logic follows)
+        raise Exception('unknown status [{}] encountered for spawned ' +
+                        'job ({}, {})'.format(JobInfo['status'],
+                                              JobInfo['JobID'],
+                                              JobInfo['JobPart']))
+
+    try:
+        JobInfo['PowerID'].remove(PowerID)
+        JobInfo['hostname'].remove(hostname)
+    except:
+        pass
+    JobInfo['spawn_complete'].add(my_id)
+    update_part(JobInfo, Release=True)
+
+    if len(JobInfo['PowerID']) == 0 and \
+            len(JobInfo['spawn_id']) == JobInfo['spawn_count']:
+        # no more running or *queued* spawns
+        is_missing = sum([s not in JobInfo['spawn_complete']
+                          for s in JobInfo['spawn_id']])
+
+        if is_missing:
+            # submit missing spawns? this can turn into a loop
+            # TODO: use 'resubmit' counter to limit resubmission to once per spawn
+            pass
+        else:
+            # set but not update yet (delay post-completion submissions)
+            JobInfo['status'] = 'complete'
+
+    return JobInfo
+
+
+def spawn_resubmit(JobID, JobPart):
+    """ submit missing spawns. """
+    JobInfo = get_part_info(JobID, JobPart)
+    if JobInfo['status'] == 'spawn':
+        for i in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
+            time.sleep(5)
+            submit_one_part(JobInfo['JobID'], JobInfo['JobPart'], Spawn=True)
