@@ -356,10 +356,19 @@ def set_part_field(JobID, JobPart, Fields={'status': 'init'},
                            'updating_info': True}):
     for p in make_iter(JobPart):
         part = get_part_info(JobID, p, HoldFile=False)
-        for k, v in Fields.items():
-            if k in Unless:
+
+        skip_part = False
+        for k in Unless:  # this tests whether the part is protected
+            if k in part:
                 if part[k] in make_iter(Unless[k]):
-                    continue
+                    skip_part = True
+        if skip_part:
+            continue
+
+        for k, v in Fields.items():
+#            if k in Unless:  # OLD: this tests whether the value being changed is protected
+#                if part[k] in make_iter(Unless[k]):
+#                    continue
             part[k] = v
         update_part(part, Release=True)
 
