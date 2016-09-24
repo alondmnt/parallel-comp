@@ -36,14 +36,14 @@ else:
     DrivePath = 'T:/dalon/'
 QFile = '../jobs/job_queue.pickle'
 JobDir = '../jobs/'
-PowerQ = 'tamirs2'
+PowerQ = 'tamirs1'
 
 
 def submit_jobs(MaxJobs=None, MinPrior=0, Filter=None):
     if not running_on_power:
         print('submit_jobs: not running on power.')
         return
-    if PowerID is not None:
+    if PowerID is not None and 'power5' not in hostname:
         if get_qstat()['queue'] == 'nano4':
             print('submit_jobs: cannot submit from nano4.')
             return
