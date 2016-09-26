@@ -334,6 +334,8 @@ def get_part_info(JobID, JobPart, HoldFile=False, SetID=False):
         else:
             JobInfo['PowerID'] = PowerID
             JobInfo['hostname'] = hostname
+        dict_append(JobInfo, 'stdout', '../jobs/{}/logs/{}.power5.tau.ac.il.OU'.format(JobID, PowerID))
+        dict_append(JobInfo, 'stderr', '../jobs/{}/logs/{}.power5.tau.ac.il.ER'.format(JobID, PowerID))
         update_part(JobInfo, Release=True)
     return JobInfo
 
@@ -451,7 +453,8 @@ def spawn_submit(JobInfo, N):
         'spawn' status for correct logic: i.e., only last job to complete
         updates additional fields in JobInfo. """
     set_part_field(JobInfo['JobID'], JobInfo['JobPart'],
-                   Fields={'spawn_count': N+1}, Unless={})
+                   Fields={'spawn_count': N+1,
+                           'stdout': [], 'stderr': []}, Unless={})
     for i in range(N):
         time.sleep(5)  # avoid collisions
         submit_one_part(JobInfo['JobID'], JobInfo['JobPart'], Spawn=True)
@@ -506,3 +509,25 @@ def spawn_resubmit(JobID, JobPart):
         for i in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
             time.sleep(5)
             submit_one_part(JobInfo['JobID'], JobInfo['JobPart'], Spawn=True)
+
+
+def print_log(JobID, JobPart, LogKey='stdout', LogIndex=-1):
+    """ print power stdout log. """
+    JobInfo = get_part_info(JobID, JobPart)
+    if LogKey not in JobInfo:
+        print('log unknown')
+        return
+    LogFile = JobInfo[LogKey]
+    if LogIndex > 0 and len(LogFile) <= LogIndex:
+        print('log index too large')
+        return
+    if LogIndex < 0 and len(LogFile) < abs(LogIndex):
+        print('log index too small')
+        return
+    LogFile = LogFile[LogIndex]
+    if not os.path.exists(LogFile):
+        print('log is missing.\n{}'.format(LogFile))
+        return
+    with open(LogFile, 'r') as fid:
+        for line in fid:
+            print(line[:-1])
