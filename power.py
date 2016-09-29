@@ -37,6 +37,8 @@ else:
 QFile = '../jobs/job_queue.pickle'
 JobDir = '../jobs/'
 PowerQ = 'tamirs1'
+LogOut = '{}.power5.tau.ac.il.OU'.format(PowerID)
+LogErr = '{}.power5.tau.ac.il.ER'.format(PowerID)
 
 
 def submit_jobs(MaxJobs=None, MinPrior=0, Filter=None):
@@ -334,8 +336,8 @@ def get_part_info(JobID, JobPart, HoldFile=False, SetID=False):
         else:
             JobInfo['PowerID'] = PowerID
             JobInfo['hostname'] = hostname
-        dict_append(JobInfo, 'stdout', '../jobs/{}/logs/{}.power5.tau.ac.il.OU'.format(JobID, PowerID))
-        dict_append(JobInfo, 'stderr', '../jobs/{}/logs/{}.power5.tau.ac.il.ER'.format(JobID, PowerID))
+        dict_append(JobInfo, 'stdout', '../jobs/{}/logs/{}'.format(JobID, LogOut))
+        dict_append(JobInfo, 'stderr', '../jobs/{}/logs/{}'.format(JobID, LogErr))
         update_part(JobInfo, Release=True)
     return JobInfo
 
