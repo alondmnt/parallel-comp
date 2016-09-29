@@ -513,8 +513,26 @@ def spawn_resubmit(JobID, JobPart):
             submit_one_part(JobInfo['JobID'], JobInfo['JobPart'], Spawn=True)
 
 
+def isiterable(p_object):
+    try:
+        it = iter(p_object)
+    except TypeError: 
+        return False
+    return True
+
+
 def print_log(JobID, JobPart, LogKey='stdout', LogIndex=-1):
-    """ print power stdout log. """
+    """ print job logs. """
+    if isiterable(JobID):
+        [print_log(j, JobPart, LogKey, LogIndex) for j in JobID]
+        return
+    if isiterable(JobPart):
+        [print_log(JobID, p, LogKey, LogIndex) for p in JobPart]
+        return
+    if isiterable(LogIndex):
+        [print_log(JobID, JobPart, LogKey, i) for i in LogIndex]
+        return
+
     JobInfo = get_part_info(JobID, JobPart)
     if LogKey not in JobInfo:
         print('log unknown')
@@ -530,6 +548,9 @@ def print_log(JobID, JobPart, LogKey='stdout', LogIndex=-1):
     if not os.path.exists(LogFile):
         print('log is missing.\n{}'.format(LogFile))
         return
+
+    print('\n\n{} log for {}/{} part {}:'.format(LogKey, JobID,
+          '/'.join(JobInfo['name']), JobPart))
     with open(LogFile, 'r') as fid:
         for line in fid:
             print(line[:-1])
