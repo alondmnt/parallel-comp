@@ -145,9 +145,8 @@ def submit_one_part(JobID, JobPart, Spawn=False):
     global JobDir
     global PowerQ
 
-    JobDir = os.path.abspath(JobDir) + '/'
-    ErrDir = JobDir + '{}/logs/'.format(JobID)
-    OutDir = JobDir + '{}/logs/'.format(JobID)
+    ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobID)
+    OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobID)
     if not os.path.isdir(ErrDir):
         os.makedirs(ErrDir)
 
@@ -549,8 +548,28 @@ def print_log(JobID, JobPart, LogKey='stdout', LogIndex=-1):
         print('log is missing.\n{}'.format(LogFile))
         return
 
-    print('\n\n{} log for {}/{} part {}:'.format(LogKey, JobID,
+    print('\n\n[[[{} log for {}/{}/part_{}:]]]\n'.format(LogKey, JobID,
           '/'.join(JobInfo['name']), JobPart))
     with open(LogFile, 'r') as fid:
         for line in fid:
             print(line[:-1])
+
+
+def generate_script(JobInfo, Template, JobDir=JobDir):
+    """ originally from RP module. """
+    if JobDir[-1] != '/' and JobDir[-1] != '\\':
+        JobDir = JobDir + '/'
+    OutDir = JobDir + str(JobInfo['JobID'])
+    if not os.path.isdir(OutDir):
+        os.makedirs(OutDir)
+    tmp = os.path.basename(Template).split('.')
+    ext = tmp[-1]
+    tmp = tmp[0].split('_')[0]
+    OutScript = '/{}_{JobID}_{JobPart}.{}'.format(tmp, ext, **JobInfo)
+    OutScript = OutDir + OutScript
+    with open(Template) as fid:
+        with open(OutScript, 'w') as oid:
+            for line in fid:
+                oid.write(line.format(**JobInfo))
+    os.chmod(OutScript, 0o744)
+    return OutScript
