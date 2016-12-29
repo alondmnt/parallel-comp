@@ -236,15 +236,19 @@ def get_queue(Verbose=True, SubmitMissing=False, Display=None, Filter=None):
                 continue
             pinfo = pickle.load(open(pfile, 'rb'))
             if type(Filter) is dict:
-                skip_flag = True
+                skip_flag = False  # skip unless all filters matched (AND)
                 for k, v in Filter.items():
                     if k not in pinfo:
                         continue
-                    for n in make_iter(pinfo[k]):
-                        if v in n:
-                            skip_flag = False
+                    for filt in make_iter(v):
+                        one_match = False
+                        for n in make_iter(pinfo[k]):
+                            if filt in n:
+                                one_match = True
+                        if not one_match:
+                            skip_flag = True
                 if skip_flag:
-                    del Qout[JobID]
+                    del Qout[JobID]  # skip entire job if part has a match
                     break
             cnt['total'] += 1
             if 'PowerID' in pinfo:
@@ -457,7 +461,7 @@ def spawn_submit(JobInfo, N):
                    Fields={'spawn_count': N+1,
                            'stdout': [], 'stderr': []}, Unless={})
     for i in range(N):
-        time.sleep(5)  # avoid collisions
+        time.sleep(10)  # avoid collisions
         submit_one_part(JobInfo['JobID'], JobInfo['JobPart'], Spawn=True)
 
     # update current job with spawn IDs
