@@ -217,7 +217,7 @@ def get_power_queue():
     return Q
 
 
-def get_queue(Verbose=True, SubmitMissing=False, Display=None, Filter=None):
+def get_queue(Verbose=True, ResetMissing=False, Display=None, Filter=None):
     # reads from global job queue file
     Q = pickle.load(open(QFile, 'rb'))
     curr_time = time.time()
@@ -286,7 +286,7 @@ def get_queue(Verbose=True, SubmitMissing=False, Display=None, Filter=None):
                                            '-'.join(pinfo['name'])))
                 print(status)
 
-    if SubmitMissing:
+    if ResetMissing:
         for JobID in missing:
             for JobPart in missing[JobID]:
                 PartDir = JobDir + '{}/{}'.format(JobID, JobPart)
