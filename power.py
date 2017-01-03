@@ -179,6 +179,7 @@ def submit_one_part(JobID, JobPart, Spawn=False):
                 part['hostname'] = []
                 part['spawn_id'] = []
                 part['spawn_complete'] = set()
+                part['spawn_resub'] = set()
 
         update_part(part, Release=True)
 
@@ -335,7 +336,10 @@ def get_part_info(JobID, JobPart, HoldFile=False, SetID=False):
             JobInfo['hostname'].append(hostname)
             # while the following IDs are set asynchronously, we can test if
             # were set correctly by comparing spawn_count to length of spawn_id
-            JobInfo['spawn_id'].append(len(JobInfo['spawn_id']))
+            next_id = 0
+            while next_id in JobInfo['spawn_id']:  # find missing
+                next_id += 1
+            JobInfo['spawn_id'].append(next_id)
         else:
             JobInfo['PowerID'] = PowerID
             JobInfo['hostname'] = hostname
@@ -415,6 +419,12 @@ def remove_job(JobID):
         Q = pickle.dump(Q, open(QFile, 'wb'))
 
 
+# TODO: archive_job(JobID=None, Time=None)
+# up to Time or any list of JobIDs
+
+# TODO: load_archive(fname)
+
+
 def clear_collected():
     Q = get_queue(Verbose=False)
     for JobID in Q.keys():
@@ -490,16 +500,25 @@ def spawn_complete(JobInfo):
     JobInfo['spawn_complete'].add(my_id)
     update_part(JobInfo, Release=True)
 
-    if len(JobInfo['PowerID']) == 0 and \
-            len(JobInfo['spawn_id']) == JobInfo['spawn_count']:
+    if len(JobInfo['spawn_id']) != JobInfo['spawn_count']:
+        # unexplained frequent problem, tried to work this out by delaying sub
+        # cannot resubmit because jobs may still be queued at this point
+        print('if queue is *empty*, consider using',
+              'power.spawn_resubmit({JobID}, {JobPart})'.format(JobInfo))
+    elif len(JobInfo['PowerID']) == 0:
         # no more running or *queued* spawns
-        is_missing = sum([s not in JobInfo['spawn_complete']
-                          for s in JobInfo['spawn_id']])
+        is_missing = [s for s in JobInfo['spawn_id']
+                      if s not in JobInfo['spawn_complete']]
+        if len(is_missing):
+            # submit
+            for m in is_missing:
+                if m in JobInfo['spawn_resub']:
+                    continue  # only once
+                JobInfo['spawn_id'].remove(m)  # (by value)
+                JobInfo['spawn_resub'].add(m)
+            update_part(JobInfo)
+            spawn_resubmit(JobInfo['JobID'], JobInfo['JobPart'])
 
-        if is_missing:
-            # submit missing spawns? this can turn into a loop
-            # TODO: use 'resubmit' counter to limit resubmission to once per spawn
-            pass
         else:
             # set but not update yet (delay post-completion submissions)
             JobInfo['status'] = 'complete'
@@ -512,14 +531,14 @@ def spawn_resubmit(JobID, JobPart):
     JobInfo = get_part_info(JobID, JobPart)
     if JobInfo['status'] == 'spawn':
         for i in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
-            time.sleep(5)
+            time.sleep(10)
             submit_one_part(JobInfo['JobID'], JobInfo['JobPart'], Spawn=True)
 
 
 def isiterable(p_object):
     try:
         it = iter(p_object)
-    except TypeError: 
+    except TypeError:
         return False
     return True
 
