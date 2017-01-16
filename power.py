@@ -41,7 +41,7 @@ LogOut = '{}.power5.tau.ac.il.OU'.format(PowerID)
 LogErr = '{}.power5.tau.ac.il.ER'.format(PowerID)
 
 
-def submit_jobs(MaxJobs=None, MinPrior=0, Filter=None):
+def submit_jobs(MaxJobs=None, MinPrior=0, **Filter):
     if not running_on_power:
         print('submit_jobs: not running on power.')
         return
@@ -66,7 +66,7 @@ def submit_jobs(MaxJobs=None, MinPrior=0, Filter=None):
         except:
             pass
 
-    Q = get_queue(Verbose=False, Filter=Filter)
+    Q = get_queue(Verbose=False, **Filter)
 
     """
     JOB/PART PRIORITY RULES
@@ -218,7 +218,7 @@ def get_power_queue():
     return Q
 
 
-def get_queue(Verbose=True, ResetMissing=False, Display=None, Filter=None):
+def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
     # reads from global job queue file
     Q = pickle.load(open(QFile, 'rb'))
     curr_time = time.time()
@@ -236,7 +236,7 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, Filter=None):
             if not os.path.isfile(pfile):
                 continue
             pinfo = pickle.load(open(pfile, 'rb'))
-            if type(Filter) is dict:
+            if len(Filter):
                 skip_flag = False  # skip unless all filters matched (AND)
                 for k, v in Filter.items():
                     if k not in pinfo:
@@ -511,6 +511,7 @@ def spawn_complete(JobInfo):
                       if s not in JobInfo['spawn_complete']]
         if len(is_missing):
             # submit
+            print('missing spawns')
             for m in is_missing:
                 if m in JobInfo['spawn_resub']:
                     continue  # only once
