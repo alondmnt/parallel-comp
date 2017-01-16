@@ -504,7 +504,7 @@ def spawn_complete(JobInfo):
         # unexplained frequent problem, tried to work this out by delaying sub
         # cannot resubmit because jobs may still be queued at this point
         print('if queue is *empty*, consider using',
-              'power.spawn_resubmit({JobID}, {JobPart})'.format(JobInfo))
+              'power.spawn_resubmit({JobID}, {JobPart})'.format(**JobInfo))
     elif len(JobInfo['PowerID']) == 0:
         # no more running or *queued* spawns
         is_missing = [s for s in JobInfo['spawn_id']
