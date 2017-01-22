@@ -521,6 +521,10 @@ def spawn_complete(JobInfo):
             spawn_resubmit(JobInfo['JobID'], JobInfo['JobPart'])
 
         else:
+            # reinstate job id and submit status (so it is recognized by get_queue())
+            JobInfo['status'] = 'submit'
+            JobInfo['PowerID'] = PowerID
+            update_part(JobInfo)
             # set but not update yet (delay post-completion submissions)
             JobInfo['status'] = 'complete'
 
