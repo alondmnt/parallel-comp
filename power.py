@@ -523,6 +523,7 @@ def spawn_complete(JobInfo):
         else:
             # reinstate job id and submit status (so it is recognized by get_queue())
             JobInfo['status'] = 'submit'
+            JobInfo['hostname'] = hostname
             JobInfo['PowerID'] = PowerID
             update_part(JobInfo)
             # set but not update yet (delay post-completion submissions)
