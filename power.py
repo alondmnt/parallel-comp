@@ -19,6 +19,8 @@ from copy import deepcopy
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on power
     PowerID = os.environ['PBS_JOBID'].split('.')[0]
+    LogOut = '{}.OU'.format(os.environ['PBS_JOBID'])
+    LogErr = '{}.ER'.format(os.environ['PBS_JOBID'])
 else:
     PowerID = None
 if 'HOSTNAME' in os.environ:
@@ -36,9 +38,7 @@ else:
     DrivePath = 'T:/dalon/'
 QFile = '../jobs/job_queue.pickle'
 JobDir = '../jobs/'
-PowerQ = 'tamirs1'
-LogOut = '{}.power5.tau.ac.il.OU'.format(PowerID)
-LogErr = '{}.power5.tau.ac.il.ER'.format(PowerID)
+PowerQ = 'tamirs3'
 
 
 def submit_jobs(MaxJobs=None, MinPrior=0, **Filter):
