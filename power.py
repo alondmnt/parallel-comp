@@ -200,7 +200,12 @@ def get_qstat(JobID=PowerID):
     if JobID is None:
         print('not running on a power node')
         return {}
-    return parse_qstat(subprocess.check_output(['qstat', '-f', JobID]))
+    try:
+        return parse_qstat(subprocess.check_output(['qstat', '-f', JobID]))
+    except subprocess.CalledProcessError as e:
+        # sometimes this fails on power, not clear why (power does not recognize the jobid)
+        print(e)
+        return None
 
 
 def get_power_queue():
@@ -584,8 +589,10 @@ def print_log(JobID, JobPart, LogKey='stdout', LogIndex=-1):
             print(line[:-1])
 
 
-def generate_script(JobInfo, Template, JobDir=JobDir):
+def generate_script(JobInfo, Template=None, JobDir=JobDir):
     """ originally from RP module. """
+    if Template is None:
+        Template = JobInfo['script']
     if JobDir[-1] != '/' and JobDir[-1] != '\\':
         JobDir = JobDir + '/'
     OutDir = JobDir + str(JobInfo['JobID'])
@@ -601,4 +608,5 @@ def generate_script(JobInfo, Template, JobDir=JobDir):
             for line in fid:
                 oid.write(line.format(**JobInfo))
     os.chmod(OutScript, 0o744)
+    JobInfo['script'] = OutScript
     return OutScript
