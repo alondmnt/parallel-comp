@@ -8,8 +8,10 @@ Created on Wed Mar 18 22:45:50 2015
 import re
 import os
 import subprocess
+import sys
 import time
 import pickle
+pickle.HIGHEST_PROTOCOL = 2
 import shutil
 import warnings
 from numpy.random import randint
@@ -23,6 +25,8 @@ if 'PBS_JOBID' in os.environ:
     LogErr = '{}.ER'.format(os.environ['PBS_JOBID'])
 else:
     PowerID = None
+    LogOut = None
+    LogErr = None
 if 'HOSTNAME' in os.environ:
     hostname = os.environ['HOSTNAME']
 else:
@@ -34,9 +38,11 @@ else:
 
 if os.name == 'posix':
     DrivePath = '/tamir1/dalon/'
+    if not running_on_power:
+        DrivePath = '/media' + DrivePath
 else:
     DrivePath = 'T:/dalon/'
-QFile = '../jobs/job_queue.pickle'
+QFile = '../jobs/job_queue.pkl'
 JobDir = '../jobs/'
 PowerQ = 'tamirs3'
 
@@ -163,7 +169,10 @@ def submit_one_part(JobID, JobPart, Spawn=False):
             this_res = DefResource
         this_sub = Qsub + [','.join(['{}={}'.format(k, v)
                            for k, v in sorted(this_res.items())])]
+        if 'queue' in part:
+            this_sub[2] = part['queue']
         subprocess.call(this_sub + [part['script']])
+#        print(this_sub + [part['script']])
         if not Spawn:
             part['status'] = 'submit'
             part['subtime'] = time.time()
@@ -240,7 +249,11 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
         for p, pfile in enumerate(Q[JobID]):
             if not os.path.isfile(pfile):
                 continue
-            pinfo = pickle.load(open(pfile, 'rb'))
+            try:
+                pinfo = pickle.load(open(pfile, 'rb'))
+            except:
+                dict_append(status, 'error', p)
+                continue
             if len(Filter):
                 skip_flag = False  # skip unless all filters matched (AND)
                 for k, v in Filter.items():
@@ -303,8 +316,11 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
     if Verbose:
         print('\nmissing jobs: {}'.format(missing))
         cnt['complete'] += cnt['collected']
-        print('\ntotal jobs on power queue: {}\n'.format(len(powQ)) +
-              'running/complete/total: {run}/{complete}/{total}'.format(**cnt))
+        print('\ntotal jobs on power queue: {}'.format(len(powQ)))
+        try:
+             print('running/complete/total: {run}/{complete}/{total}'.format(**cnt))
+        except:
+            pass
     else:
         return Qout
 
@@ -358,12 +374,50 @@ def update_part(PartInfo, Release=False):
     # updates the specific part's local job file (not global queue)
     if Release:
         PartInfo['updating_info'] = False
-    pickle.dump(PartInfo, open(PartInfo['jobfile'], 'wb'))
+    if PartInfo['jobfile'] is None:
+        PartInfo['jobfile'] = JobDir + '{}/info_{}.pkl'.format(
+                PartInfo['JobID'], PartInfo['JobPart'])
+    pickle.dump(PartInfo, open(PartInfo['jobfile'], 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def update_job(JobInfo):
     for p in JobInfo:
         update_part(p)
+
+
+def add_job_to_queue(JobID, JobParts, QFile=QFile):
+    """ provide a list of job info files. """
+    if os.path.exists(QFile):
+        Q = pickle.load(open(QFile, 'rb'))
+    else:
+        Q = {}  # init new queue file
+    Q[JobID] = JobParts
+    pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
+    print('\njob {} (size {:,d}) added to queue ({})'.format(JobID,
+          len(JobParts), QFile))
+
+
+def add_part_to_queue(JobInfo, QFile=QFile):
+    """ NOTE: this can turn problematic and recursive (how to define jobfile
+        before JobPart is known).
+        job info or a list of job info dicts supported.
+        automatically sets the JobPart id in each JobInfo (in place). """
+    if os.path.exists(QFile):
+        Q = pickle.load(open(QFile, 'rb'))
+    else:
+        Q = {}  # init new queue file
+    for part in make_iter(JobInfo):
+        JobID = JobInfo['JobID']
+        if JobInfo[JobID] not in Q:
+            # add a new job
+            Q[JobID] = []
+        JobInfo['JobPart'] = len(Q[JobID])
+        Q[JobID].append(JobInfo['jobfile'])
+    pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def set_complete(JobID, JobPart):
+    set_part_field(JobID, JobPart, Fields={'status': 'complete'}, Unless={})
 
 
 def set_part_field(JobID, JobPart, Fields={'status': 'init'},
@@ -410,7 +464,7 @@ def recover_queue():
         for f in filenames:
             if f.find('info_') >= 0:
                 dict_append(Q, jid, dirpath + '/' + f)
-    pickle.dump(Q, open(QFile, 'wb'))
+    pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def remove_job(JobID):
@@ -421,7 +475,7 @@ def remove_job(JobID):
         Q = pickle.load(open(QFile, 'rb'))
         if j in Q:
             del Q[j]
-        Q = pickle.dump(Q, open(QFile, 'wb'))
+        Q = pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
 
 # TODO: archive_job(JobID=None, Time=None)
@@ -609,4 +663,12 @@ def generate_script(JobInfo, Template=None, JobDir=JobDir):
                 oid.write(line.format(**JobInfo))
     os.chmod(OutScript, 0o744)
     JobInfo['script'] = OutScript
-    return OutScript
+
+
+def generate_data(JobInfo, Data, JobDir=JobDir):
+    """ standard file naming / dump. """
+    JobInfo['data'] = '{}/{}/data_{}.pkl'.format(JobDir, JobInfo['JobID'],
+                                                 JobInfo['JobPart'])
+    if not os.path.isdir(os.path.dirname(JobInfo['data'])):
+        os.makedirs(os.path.dirname(JobInfo['data']))
+    pickle.dump(Data, open(JobInfo['data'], 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
