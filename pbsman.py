@@ -8,7 +8,6 @@ Created on Wed Mar 18 22:45:50 2015
 import re
 import os
 import subprocess
-import sys
 import time
 import pickle
 pickle.HIGHEST_PROTOCOL = 2
@@ -18,64 +17,77 @@ from numpy.random import randint
 from collections import Counter
 from copy import deepcopy
 
-if 'PBS_JOBID' in os.environ:
+
+ServerPath = '/tamir1/'
+ServerHost = 'tau.ac.il'
+QFile = '../jobs/job_queue.pkl'
+JobDir = '../jobs/'
+PBS_queue = 'tamirs3'
+
+if 'PBS_BatchID' in os.environ:
     # this also serves as a sign that we're running on power
-    PowerID = os.environ['PBS_JOBID'].split('.')[0]
-    LogOut = '{}.OU'.format(os.environ['PBS_JOBID'])
-    LogErr = '{}.ER'.format(os.environ['PBS_JOBID'])
+    PBS_ID = os.environ['PBS_BatchID'].split('.')[0]
+    LogOut = '{}.OU'.format(os.environ['PBS_BatchID'])
+    LogErr = '{}.ER'.format(os.environ['PBS_BatchID'])
 else:
-    PowerID = None
+    PBS_ID = None
     LogOut = None
     LogErr = None
 if 'HOSTNAME' in os.environ:
     hostname = os.environ['HOSTNAME']
 else:
     hostname = []
-if (PowerID is not None) or ('tau.ac.il' in hostname):
-    running_on_power = True
+if (PBS_ID is not None) or (ServerHost in hostname):
+    running_on_cluster = True
 else:
-    running_on_power = False
+    running_on_cluster = False
+LocalPath = os.path.splitdrive(os.path.abspath('.'))
 
-if os.name == 'posix':
-    DrivePath = '/tamir1/dalon/'
-    if not running_on_power:
-        DrivePath = '/media' + DrivePath
-else:
-    DrivePath = 'T:/dalon/'
-QFile = '../jobs/job_queue.pkl'
-JobDir = '../jobs/'
-PowerQ = 'tamirs3'
+
+# example for a job template
+DefResource = {'mem': '1gb', 'pmem': '1gb', 'vmem': '3gb',
+               'pvmem': '3gb', 'cput': '04:59:00'}
+JobTemplate =   {'BatchID': None,
+                 'JobIndex': None,
+                 'priority': 1,
+                 'name': ['human', 'genome_map'],
+                 'data': None,
+                 'script': 'my_template_script.sh',  # template sciprt, see generate_script()
+                 'queue': PBS_queue,
+                 'jobfile': None,
+                 'resources': DefResource,
+                 'status': 'init'}
 
 
 def submit_jobs(MaxJobs=None, MinPrior=0, **Filter):
-    if not running_on_power:
+    """ submits all next available jobs according to job priorities.
+        MaxJobs is loaded from [JobDir]/maxjobs unless specified.
+        Filter is a dictionary that get_queue() accepts. """
+    if not running_on_cluster:
         print('submit_jobs: not running on power.')
         return
-    if PowerID is not None and 'power5' not in hostname:
-        if get_qstat()['queue'] == 'nano4':
-            print('submit_jobs: cannot submit from nano4.')
-            return
-    busy_flag = JobDir + 'submitting'
-    if os.path.isfile(busy_flag):
+
+    lock_file = JobDir + 'submitting'
+    if os.path.isfile(lock_file):
         sec_since_submit = time.time() - \
-                os.path.getmtime(busy_flag)  #
+                os.path.getmtime(lock_file)
         if sec_since_submit > 300:
-            os.remove(busy_flag)
+            os.remove(lock_file)
         else:
             print('already submitting jobs.')
             return
-    flag_file = open(busy_flag, 'w')
+    flag_file = open(lock_file, 'w')
     if MaxJobs is None:
         try:
             with open(JobDir + 'maxjobs', 'r') as fid:
                 MaxJobs = int(fid.readline())
         except:
-            pass
+            MaxJobs = 1000
 
     Q = get_queue(Verbose=False, **Filter)
 
     """
-    JOB/PART PRIORITY RULES
+    BATCH/JOB PRIORITY RULES
     1. higher gets precedence - equal priority submitted in parallel.
     2. each part has a priority - determines precedence within job.
        (we will not start submitting part with priority X until all
@@ -108,13 +120,13 @@ def submit_jobs(MaxJobs=None, MinPrior=0, **Filter):
             continue
         if len(Q[j]) == 0:
             continue
-        count = submit_one_job(j, count, MaxJobs, OutFile=out_file)
+        count = submit_one_batch(j, count, MaxJobs, OutFile=out_file)
 
     flag_file.close()
     if OutFile:
         out_file.close()
         os.chmod(OutFile, 0o744)
-    os.remove(busy_flag)
+    os.remove(lock_file)
     print('max jobs: {}\nin queue: {}\nsubmitted: {}'.format(MaxJobs,
           count_in_queue,
           count - count_in_queue))
@@ -130,9 +142,9 @@ def make_iter(var):
     return var
 
 
-def submit_one_job(JobID, SubCount=0, MaxJobs=1e6, OutFile=None):
-    for j in make_iter(JobID):
-        JobInfo = get_job_info(j)
+def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
+    for j in make_iter(BatchID):
+        JobInfo = get_batch_info(j)
         job_priority = max([0] + [p['priority'] for p in JobInfo
                                   if p['status'] not in
                                   {'complete', 'collected'}])
@@ -140,29 +152,26 @@ def submit_one_job(JobID, SubCount=0, MaxJobs=1e6, OutFile=None):
             if part['priority'] < job_priority:
                 continue
             if part['status'] == 'init':
-                submit_one_part(j, part['JobPart'], OutFile)
+                submit_one_job(j, part['JobIndex'], OutFile)
                 SubCount += 1
                 if SubCount >= MaxJobs:
                     break
     return SubCount
 
 
-def submit_one_part(JobID, JobPart, Spawn=False):
-    DefResource = {'mem': '6gb', 'pmem': '6gb', 'vmem': '12gb',
-                   'pvmem': '12gb', 'cput': '04:59:00'}
-
+def submit_one_job(BatchID, JobIndex, Spawn=False):
     global JobDir
-    global PowerQ
+    global PBS_queue
 
-    ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobID)
-    OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobID)
+    ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
+    OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
     if not os.path.isdir(ErrDir):
         os.makedirs(ErrDir)
 
-    Qsub = ['qsub', '-q', PowerQ, '-e', ErrDir, '-o', OutDir, '-l']
+    Qsub = ['qsub', '-q', PBS_queue, '-e', ErrDir, '-o', OutDir, '-l']
 
-    for p in make_iter(JobPart):
-        part = get_part_info(JobID, p, HoldFile=True)
+    for p in make_iter(JobIndex):
+        part = get_job_info(BatchID, p, HoldFile=True)
         print('submiting:\t{}'.format(part['script']))
         if part['status'] != 'init':
             warnings.warn('already submitted')
@@ -179,21 +188,21 @@ def submit_one_part(JobID, JobPart, Spawn=False):
         if not Spawn:
             part['status'] = 'submit'
             part['subtime'] = time.time()
-            if 'PowerID' in part:
-                del part['PowerID']
+            if 'PBS_ID' in part:
+                del part['PBS_ID']
             if 'qstat' in part:
                 del part['qstat']
         else:
             if part['status'] != 'spawn':
                 # remove previous information
                 part['status'] = 'spawn'
-                part['PowerID'] = []
+                part['PBS_ID'] = []
                 part['hostname'] = []
                 part['spawn_id'] = []
                 part['spawn_complete'] = set()
                 part['spawn_resub'] = set()
 
-        update_part(part, Release=True)
+        update_job(part, Release=True)
 
 
 def parse_qstat(text):
@@ -208,21 +217,21 @@ def parse_qstat(text):
     return JobInfo
 
 
-def get_qstat(JobID=PowerID):
-    if JobID is None:
+def get_qstat(BatchID=PBS_ID):
+    if BatchID is None:
         print('not running on a power node')
         return {}
     try:
-        return parse_qstat(subprocess.check_output(['qstat', '-f', JobID]))
+        return parse_qstat(subprocess.check_output(['qstat', '-f', BatchID]))
     except subprocess.CalledProcessError as e:
-        # sometimes this fails on power, not clear why (power does not recognize the jobid)
+        # sometimes this fails on power, not clear why (power does not recognize the BatchID)
         print(e)
         return None
 
 
 def get_power_queue():
     Q = {}
-    if not running_on_power:
+    if not running_on_cluster:
         return Q
     data = subprocess.check_output(['qstat', '-u', os.environ['USER']],
                                    universal_newlines=True)
@@ -236,20 +245,35 @@ def get_power_queue():
 
 
 def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
+    """ Verbose mode prints a job report to screen, otherwise a dictionary Q
+        is returned with the metadata of all jobs.
+        ResetMissing will set the state of jobs that failed to 'init'.
+        Display is an iterable of states that desired for display (other
+        states will not be reported in Verbose mode).
+        Filter is a dictionary with fields as keys and desired values
+        as values, which is used to select jobs according to criteria. NOTE,
+        that entire batch will not be reported in this case.
+
+        Example:
+            get_queue(Display={'complete'})
+            will display only completed jobs.
+
+            get_queue(Filter={'name': 'awesome'})
+            will display only the batch named awesome. """
+
     # reads from global job queue file
     Q = pickle.load(open(QFile, 'rb'))
     curr_time = time.time()
     powQ = get_power_queue()
-#    powQ = {j: status[1] for j, status in powQ.items() if status[1] == 'R'}
 
     Qout = deepcopy(Q)
     missing = {}  # submitted but not running
     cnt = Counter()
-    for JobID in sorted(list(Q)):
+    for BatchID in sorted(list(Q)):
         status = {}
         processed_part = []
         skip_flag = False
-        for p, pfile in enumerate(Q[JobID]):
+        for p, pfile in enumerate(Q[BatchID]):
             if not os.path.isfile(pfile):
                 continue
             try:
@@ -270,51 +294,50 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
                         if not one_match:
                             skip_flag = True
                 if skip_flag:
-                    del Qout[JobID]  # skip entire job if part has a match
+                    del Qout[BatchID]  # skip entire batch if part has a match
                     break
             cnt['total'] += 1
-            if 'PowerID' in pinfo:
-                for pid in make_iter(pinfo['PowerID']):
+            if 'PBS_ID' in pinfo:
+                for pid in make_iter(pinfo['PBS_ID']):
                     if pid in powQ:
                         if powQ[pid][1] == 'R':
-                            pinfo['JobPart'] = str(pinfo['JobPart']) + '*'
+                            pinfo['JobIndex'] = str(pinfo['JobIndex']) + '*'
                             cnt['run'] += 1
                     elif pinfo['status'] in {'submit', 'spawn'} and \
                             'subtime' in pinfo:
                         if pinfo['subtime'] < curr_time:
-                            dict_append(missing, JobID, pinfo['JobPart'])
+                            dict_append(missing, BatchID, pinfo['JobIndex'])
             cnt[pinfo['status']] += 1
-            dict_append(status, pinfo['status'], pinfo['JobPart'])
-            Qout[JobID][p] = pinfo
+            dict_append(status, pinfo['status'], pinfo['JobIndex'])
+            Qout[BatchID][p] = pinfo
             processed_part.append(p)
 
         if skip_flag:
             continue
 
-        Q[JobID] = [Q[JobID][p] for p in processed_part]
-        Qout[JobID] = [Qout[JobID][p] for p in processed_part]
+        Q[BatchID] = [Q[BatchID][p] for p in processed_part]
+        Qout[BatchID] = [Qout[BatchID][p] for p in processed_part]
 
-        if len(Q[JobID]) == 0:
-            print('\nempty {}'.format(JobID))
-            del Q[JobID]
-            del Qout[JobID]
+        if len(Q[BatchID]) == 0:
+            print('\nempty {}'.format(BatchID))
+            del Q[BatchID]
+            del Qout[BatchID]
             continue
 
         if Verbose:
             if Display is not None:
                 status = {s: p for s, p in status.items() if s in Display}
             if len(status) > 0:
-                print('\n{}: {}/{}'.format(JobID, pinfo['organism'],
-                                           '-'.join(pinfo['name'])))
+                print('\n{}: {}'.format(BatchID, '/'.join(pinfo['name'])))
                 print(status)
 
     if ResetMissing:
-        for JobID in missing:
-            for JobPart in missing[JobID]:
-                PartDir = JobDir + '{}/{}'.format(JobID, JobPart)
+        for BatchID in missing:
+            for JobIndex in missing[BatchID]:
+                PartDir = JobDir + '{}/{}'.format(BatchID, JobIndex)
                 if os.path.isdir(PartDir):
                     shutil.rmtree(PartDir)
-                set_part_field(JobID, JobPart, {'status': 'init'})
+                set_job_field(BatchID, JobIndex, {'status': 'init'})
 
     if Verbose:
         print('\nmissing jobs: {}'.format(missing))
@@ -328,35 +351,35 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
         return Qout
 
 
-def get_job_info(JobID):
+def get_batch_info(BatchID):
     Q = pickle.load(open(QFile, 'rb'))
-    return [get_part_info(JobID, part) for part in range(len(Q[JobID]))]
+    return [get_job_info(BatchID, part) for part in range(len(Q[BatchID]))]
 
 
-def get_job_file(JobID, JobPart):
+def get_job_file(BatchID, JobIndex):
     Q = pickle.load(open(QFile, 'rb'))
-    return Q[JobID][JobPart].replace('/tamir1/dalon/', DrivePath)
+    return Q[BatchID][JobIndex].replace(ServerPath, LocalPath)
 
 
-def get_part_info(JobID, JobPart, HoldFile=False, SetID=False):
+def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False):
     if SetID:
         HoldFile = True
-    JobInfo = pickle.load(open(get_job_file(JobID, JobPart), 'rb'))
+    JobInfo = pickle.load(open(get_job_file(BatchID, JobIndex), 'rb'))
     if 'updating_info' not in JobInfo:
         JobInfo['updating_info'] = False
     if HoldFile:
         tries = 1
         while JobInfo['updating_info']:
             time.sleep(randint(1, 10))
-            JobInfo = pickle.load(open(get_job_file(JobID, JobPart), 'rb'))
+            JobInfo = pickle.load(open(get_job_file(BatchID, JobIndex), 'rb'))
             tries += 1
             if tries > 10:
                 raise Exception('cannot update job info')
         JobInfo['updating_info'] = True
-        update_part(JobInfo)
+        update_job(JobInfo)
     if SetID:
         if JobInfo['status'] == 'spawn':
-            JobInfo['PowerID'].append(PowerID)
+            JobInfo['PBS_ID'].append(PBS_ID)
             JobInfo['hostname'].append(hostname)
             # while the following IDs are set asynchronously, we can test if
             # were set correctly by comparing spawn_count to length of spawn_id
@@ -365,70 +388,77 @@ def get_part_info(JobID, JobPart, HoldFile=False, SetID=False):
                 next_id += 1
             JobInfo['spawn_id'].append(next_id)
         else:
-            JobInfo['PowerID'] = PowerID
+            JobInfo['PBS_ID'] = PBS_ID
             JobInfo['hostname'] = hostname
-        dict_append(JobInfo, 'stdout', '../jobs/{}/logs/{}'.format(JobID, LogOut))
-        dict_append(JobInfo, 'stderr', '../jobs/{}/logs/{}'.format(JobID, LogErr))
-        update_part(JobInfo, Release=True)
+        dict_append(JobInfo, 'stdout', '../jobs/{}/logs/{}'.format(BatchID, LogOut))
+        dict_append(JobInfo, 'stderr', '../jobs/{}/logs/{}'.format(BatchID, LogErr))
+        update_job(JobInfo, Release=True)
     return JobInfo
 
 
-def update_part(PartInfo, Release=False):
+def get_job_template(SetID=False):
+    res = deepcopy(JobTemplate)
+    if SetID:
+        res['BatchID'] = round(time.time())
+    return res
+
+
+def update_job(JobInfo, Release=False):
     # updates the specific part's local job file (not global queue)
     if Release:
-        PartInfo['updating_info'] = False
-    if PartInfo['jobfile'] is None:
-        PartInfo['jobfile'] = JobDir + '{}/info_{}.pkl'.format(
-                PartInfo['JobID'], PartInfo['JobPart'])
-    pickle.dump(PartInfo, open(PartInfo['jobfile'], 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
+        JobInfo['updating_info'] = False
+    if JobInfo['jobfile'] is None:
+        JobInfo['jobfile'] = JobDir + '{}/meta_{}.pkl'.format(
+                JobInfo['BatchID'], JobInfo['JobIndex'])
+    pickle.dump(JobInfo, open(JobInfo['jobfile'], 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def update_job(JobInfo):
-    for p in JobInfo:
-        update_part(p)
+def update_batch(batch):
+    for job in batch:
+        update_job(job)
 
 
-def add_job_to_queue(JobID, JobParts, QFile=QFile):
+def add_batch_to_queue(BatchID, Jobs, QFile=QFile):
     """ provide a list of job info files. """
     if os.path.exists(QFile):
         Q = pickle.load(open(QFile, 'rb'))
     else:
         Q = {}  # init new queue file
-    Q[JobID] = JobParts
+    Q[BatchID] = Jobs
     pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
-    print('\njob {} (size {:,d}) added to queue ({})'.format(JobID,
-          len(JobParts), QFile))
+    print('\njob {} (size {:,d}) added to queue ({})'.format(BatchID,
+          len(Jobs), QFile))
 
 
-def add_part_to_queue(JobInfo, QFile=QFile):
+def add_job_to_queue(JobInfo, QFile=QFile):
     """ NOTE: this can turn problematic and recursive (how to define jobfile
-        before JobPart is known).
+        before JobIndex is known).
         job info or a list of job info dicts supported.
-        automatically sets the JobPart id in each JobInfo (in place). """
+        automatically sets the JobIndex id in each JobInfo (in place). """
     if os.path.exists(QFile):
         Q = pickle.load(open(QFile, 'rb'))
     else:
         Q = {}  # init new queue file
     for part in make_iter(JobInfo):
-        JobID = JobInfo['JobID']
-        if JobInfo[JobID] not in Q:
+        BatchID = JobInfo['BatchID']
+        if JobInfo[BatchID] not in Q:
             # add a new job
-            Q[JobID] = []
-        JobInfo['JobPart'] = len(Q[JobID])
-        Q[JobID].append(JobInfo['jobfile'])
+            Q[BatchID] = []
+        JobInfo['JobIndex'] = len(Q[BatchID])
+        Q[BatchID].append(JobInfo['jobfile'])
     pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def set_complete(JobID, JobPart):
-    set_part_field(JobID, JobPart, Fields={'status': 'complete'}, Unless={})
+def set_complete(BatchID, JobIndex):
+    set_job_field(BatchID, JobIndex, Fields={'status': 'complete'}, Unless={})
 
 
-def set_part_field(JobID, JobPart, Fields={'status': 'init'},
+def set_job_field(BatchID, JobIndex, Fields={'status': 'init'},
                    Unless={'status': ['complete', 'collected'],
                            'func': 'build_genome',
                            'updating_info': True}):
-    for p in make_iter(JobPart):
-        part = get_part_info(JobID, p, HoldFile=False)
+    for p in make_iter(JobIndex):
+        part = get_job_info(BatchID, p, HoldFile=False)
 
         skip_part = False
         for k in Unless:  # this tests whether the part is protected
@@ -443,18 +473,17 @@ def set_part_field(JobID, JobPart, Fields={'status': 'init'},
 #                if part[k] in make_iter(Unless[k]):
 #                    continue
             part[k] = v
-        update_part(part, Release=True)
+        update_job(part, Release=True)
 
 
-def set_job_field(JobID, Fields={'status': 'init'},
+def set_batch_field(BatchID, Fields={'status': 'init'},
                   Unless={'status': ['complete', 'collected'],
-                          'func': 'build_genome',
                           'updating_info': True}):
     # updates the specific parts' local job files (not global queue)
     Q = pickle.load(open(QFile, 'rb'))
-    for j in make_iter(JobID):
+    for j in make_iter(BatchID):
         for part in range(len(Q[j])):
-            set_part_field(j, part, Fields, Unless)
+            set_job_field(j, part, Fields, Unless)
 
 
 def recover_queue():
@@ -470,8 +499,8 @@ def recover_queue():
     pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def remove_job(JobID):
-    for j in make_iter(JobID):
+def remove_batch(BatchID):
+    for j in make_iter(BatchID):
         WorkDir = JobDir + str(j)
         if os.path.isdir(WorkDir):
             shutil.rmtree(WorkDir)
@@ -481,28 +510,28 @@ def remove_job(JobID):
         Q = pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
 
-# TODO: archive_job(JobID=None, Time=None)
-# up to Time or any list of JobIDs
+# TODO: archive_batch(BatchID=None, Time=None)
+# up to Time or any list of BatchIDs
 
 # TODO: load_archive(fname)
 
 
 def clear_collected():
     Q = get_queue(Verbose=False)
-    for JobID in Q.keys():
+    for BatchID in Q.keys():
         if all([True if p['status'] == 'collected' else False
-                for p in Q[JobID]]):
-            remove_job(JobID)
+                for p in Q[BatchID]]):
+            remove_batch(BatchID)
 
 
 def clean_temp_folders():
-    """ clean RP mapping folders from temp files, that are sometimes left
+    """ clean folders from temp files, that are sometimes left
         when jobs get stuck. """
     Q = get_queue(Verbose=False)
     rmv_list = []
-    for JobID in Q.keys():
-        for part in Q[JobID]:
-            tempdir = JobDir + '{}/{}'.format(JobID, part['JobPart'])
+    for BatchID in Q.keys():
+        for part in Q[BatchID]:
+            tempdir = JobDir + '{}/{}'.format(BatchID, part['JobIndex'])
             if os.path.exists(tempdir):
                 shutil.rmtree(tempdir)
                 rmv_list.append(tempdir)
@@ -516,58 +545,58 @@ def dict_append(dictionary, key, value):
     dictionary[key].append(value)
 
 
-def boost_job_priority(JobID, Booster=100):
+def boost_batch_priority(BatchID, Booster=100):
     Q = pickle.load(open(QFile, 'rb'))
-    for j in make_iter(JobID):
+    for j in make_iter(BatchID):
         for p in Q[j]:
             part = pickle.load(open(p, 'rb'))
             part['priority'] += Booster
-            update_part(part)
+            update_job(part)
 
 
 def spawn_submit(JobInfo, N):
     """ run the selected job multiple times in parallel. job needs to handle
         'spawn' status for correct logic: i.e., only last job to complete
         updates additional fields in JobInfo. """
-    set_part_field(JobInfo['JobID'], JobInfo['JobPart'],
+    set_job_field(JobInfo['BatchID'], JobInfo['JobIndex'],
                    Fields={'spawn_count': N+1,
                            'stdout': [], 'stderr': []}, Unless={})
     for i in range(N):
         time.sleep(10)  # avoid collisions
-        submit_one_part(JobInfo['JobID'], JobInfo['JobPart'], Spawn=True)
+        submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
 
     # update current job with spawn IDs
-    return get_part_info(JobInfo['JobID'], JobInfo['JobPart'], SetID=True)
+    return get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], SetID=True)
 
 
 def spawn_complete(JobInfo):
     """ signal that one spawn has ended successfully. only update done by
         current job to JobInfo, unless all spawns completed. """
     my_id = JobInfo['spawn_id'][-1]
-    JobInfo = get_part_info(JobInfo['JobID'], JobInfo['JobPart'], HoldFile=True)
+    JobInfo = get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], HoldFile=True)
     if JobInfo['status'] != 'spawn':
         # must not leave function with an ambiguous status in JobInfo
         # e.g., if job has been re-submitted by some one/job
         # (unknown logic follows)
         raise Exception('unknown status [{}] encountered for spawned ' +
                         'job ({}, {})'.format(JobInfo['status'],
-                                              JobInfo['JobID'],
-                                              JobInfo['JobPart']))
+                                              JobInfo['BatchID'],
+                                              JobInfo['JobIndex']))
 
     try:
-        JobInfo['PowerID'].remove(PowerID)
+        JobInfo['PBS_ID'].remove(PBS_ID)
         JobInfo['hostname'].remove(hostname)
     except:
         pass
     JobInfo['spawn_complete'].add(my_id)
-    update_part(JobInfo, Release=True)
+    update_job(JobInfo, Release=True)
 
     if len(JobInfo['spawn_id']) != JobInfo['spawn_count']:
         # unexplained frequent problem, tried to work this out by delaying sub
         # cannot resubmit because jobs may still be queued at this point
         print('if queue is *empty*, consider using',
-              'power.spawn_resubmit({JobID}, {JobPart})'.format(**JobInfo))
-    elif len(JobInfo['PowerID']) == 0:
+              'power.spawn_resubmit({BatchID}, {JobIndex})'.format(**JobInfo))
+    elif len(JobInfo['PBS_ID']) == 0:
         # no more running or *queued* spawns
         is_missing = [s for s in JobInfo['spawn_id']
                       if s not in JobInfo['spawn_complete']]
@@ -579,28 +608,28 @@ def spawn_complete(JobInfo):
                     continue  # only once
                 JobInfo['spawn_id'].remove(m)  # (by value)
                 JobInfo['spawn_resub'].add(m)
-            update_part(JobInfo)
-            spawn_resubmit(JobInfo['JobID'], JobInfo['JobPart'])
+            update_job(JobInfo)
+            spawn_resubmit(JobInfo['BatchID'], JobInfo['JobIndex'])
 
         else:
             # reinstate job id and submit status (so it is recognized by get_queue())
             JobInfo['status'] = 'submit'
             JobInfo['hostname'] = hostname
-            JobInfo['PowerID'] = PowerID
-            update_part(JobInfo)
+            JobInfo['PBS_ID'] = PBS_ID
+            update_job(JobInfo)
             # set but not update yet (delay post-completion submissions)
             JobInfo['status'] = 'complete'
 
     return JobInfo
 
 
-def spawn_resubmit(JobID, JobPart):
+def spawn_resubmit(BatchID, JobIndex):
     """ submit missing spawns. """
-    JobInfo = get_part_info(JobID, JobPart)
+    JobInfo = get_job_info(BatchID, JobIndex)
     if JobInfo['status'] == 'spawn':
         for i in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
             time.sleep(10)
-            submit_one_part(JobInfo['JobID'], JobInfo['JobPart'], Spawn=True)
+            submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
 
 
 def isiterable(p_object):
@@ -611,19 +640,19 @@ def isiterable(p_object):
     return True
 
 
-def print_log(JobID, JobPart, LogKey='stdout', LogIndex=-1):
+def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1):
     """ print job logs. """
-    if isiterable(JobID):
-        [print_log(j, JobPart, LogKey, LogIndex) for j in JobID]
+    if isiterable(BatchID):
+        [print_log(j, JobIndex, LogKey, LogIndex) for j in BatchID]
         return
-    if isiterable(JobPart):
-        [print_log(JobID, p, LogKey, LogIndex) for p in JobPart]
+    if isiterable(JobIndex):
+        [print_log(BatchID, p, LogKey, LogIndex) for p in JobIndex]
         return
     if isiterable(LogIndex):
-        [print_log(JobID, JobPart, LogKey, i) for i in LogIndex]
+        [print_log(BatchID, JobIndex, LogKey, i) for i in LogIndex]
         return
 
-    JobInfo = get_part_info(JobID, JobPart)
+    JobInfo = get_job_info(BatchID, JobIndex)
     if LogKey not in JobInfo:
         print('log unknown')
         return
@@ -639,26 +668,28 @@ def print_log(JobID, JobPart, LogKey='stdout', LogIndex=-1):
         print('log is missing.\n{}'.format(LogFile))
         return
 
-    print('\n\n[[[{} log for {}/{}/part_{}:]]]\n'.format(LogKey, JobID,
-          '/'.join(JobInfo['name']), JobPart))
+    print('\n\n[[[{} log for {}/{}/part_{}:]]]\n'.format(LogKey, BatchID,
+          '/'.join(JobInfo['name']), JobIndex))
     with open(LogFile, 'r') as fid:
         for line in fid:
             print(line[:-1])
 
 
 def generate_script(JobInfo, Template=None, JobDir=JobDir):
-    """ originally from RP module. """
+    """ will generate a script based on a template while replacing all fields
+        appearing in the template (within curly brackets {fieldname}) according
+        to the value of the field in JobInfo. """
     if Template is None:
         Template = JobInfo['script']
     if JobDir[-1] != '/' and JobDir[-1] != '\\':
         JobDir = JobDir + '/'
-    OutDir = JobDir + str(JobInfo['JobID'])
+    OutDir = JobDir + str(JobInfo['BatchID'])
     if not os.path.isdir(OutDir):
         os.makedirs(OutDir)
     tmp = os.path.basename(Template).split('.')
     ext = tmp[-1]
     tmp = tmp[0].split('_')[0]
-    OutScript = '/{}_{JobID}_{JobPart}.{}'.format(tmp, ext, **JobInfo)
+    OutScript = '/{}_{BatchID}_{JobIndex}.{}'.format(tmp, ext, **JobInfo)
     OutScript = OutDir + OutScript
     with open(Template) as fid:
         with open(OutScript, 'w') as oid:
@@ -669,9 +700,10 @@ def generate_script(JobInfo, Template=None, JobDir=JobDir):
 
 
 def generate_data(JobInfo, Data, JobDir=JobDir):
-    """ standard file naming / dump. """
-    JobInfo['data'] = '{}/{}/data_{}.pkl'.format(JobDir, JobInfo['JobID'],
-                                                 JobInfo['JobPart'])
+    """ will save data and update metadata with the file location.
+        standard file naming / dump. """
+    JobInfo['data'] = '{}/{}/data_{}.pkl'.format(JobDir, JobInfo['BatchID'],
+                                                 JobInfo['JobIndex'])
     if not os.path.isdir(os.path.dirname(JobInfo['data'])):
         os.makedirs(os.path.dirname(JobInfo['data']))
     pickle.dump(Data, open(JobInfo['data'], 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
