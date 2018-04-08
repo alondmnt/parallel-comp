@@ -1,6 +1,6 @@
 # parallel-comp
 
-a collection of tools I've been maintaining to help me with job management on PBS clusters. this can theoretically be applied to other systems, such as condor, etc.
+this is a collection of tools I've been maintaining to help me with job management on PBS clusters. this can theoretically be applied to other systems, such as condor, etc.
 
 ## general concepts
 
