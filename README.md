@@ -2,6 +2,8 @@
 
 this is a collection of tools I've been maintaining to help me with job management on PBS clusters. this can theoretically be applied to other systems, such as condor, etc.
 
+see also the Jupyter notebook [example.ipynb](example.ipynb).
+
 ## general concepts
 
 jobs are organized in batches that may contain any number of jobs. usually, a batch is comprised of jobs with the same objective, so that when all jobs in the batch end - the pipeline is complete. this manager contains utilities for generating such batches, controlling their execution and monitoring it for failure/success.
