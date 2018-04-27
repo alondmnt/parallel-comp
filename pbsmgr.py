@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Mar 18 22:45:50 2015
+a PBS (portable batch system) parallel-computing job manager.
+see also: README.md, example.ipynb
 
-@author: dalon
+@author: Alon Diament, Tuller Lab
+Created on Wed Mar 18 22:45:50 2015
 """
 
 import re
@@ -61,7 +63,7 @@ JobTemplate =   {'BatchID': None,
 
 def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False, **Filter):
     """ submits all next available jobs according to job priorities.
-        MaxJobs is loaded from [JobDir]/maxjobs unless specified.
+        MaxJobs is loaded from [JobDir]/maxjobs unless specified (default=1000).
         ForceSubmit ignores another process currently submitting jobs (or an
         abandoned lock file).
         Filter are fields that get_queue() accepts. """
@@ -263,7 +265,8 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
         states will not be reported in Verbose mode).
         Filter is a dictionary with fields as keys and desired values
         as values, which is used to select jobs according to criteria. NOTE,
-        that entire batch will not be reported in this case.
+        that entire batch will not be reported if any of its jobs does not
+        match the given filter.
 
         Example:
             get_queue(Display={'complete'})
