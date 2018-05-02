@@ -56,6 +56,8 @@ for each job, along with a title containing the batch-id and name, get-queue wil
 
 * collected: after result has been successfully handled by a downstream job and its output data is no longer needed (and intermediate data has usually been deleted).
 
+NOTE, that additional job states may be arbitrarily defined by the user (simply by updating the metadata accordingly during the run, see example/job.py).
+
 get\_queue can limit the the display of jobs to selected states, using the following syntax:
 
         pbsmgr.get_queue(Display={'complete', 'collected'})
@@ -82,7 +84,7 @@ for example, to display the last recorded error log:
 
         pbsmgr.print_log(1482002879, 0, 'stderr')
 
-note that bowtie reports statistics to _stderr_, while cutadapt and my scripts report to _stdout_.
+note that some programs reports run-time statistics to _stderr_, while others report to _stdout_, so it is always worth checking both.
 
 **job meta-data**
 
