@@ -30,7 +30,7 @@ job metadata is kept in a dictionary, such as the one in the following example. 
          'script': 'my_template_script.sh',
          'status': 'init'}
 
-note the 'priority' field and its score. jobs are submitted in priority groups in descending order. first, all jobs within a batch with the highest priority score will be submitted. the next-ranked priority group will be submitted only once they have completed, and so on. the absolute scores assigned as priorities can be arbitrary as long as they are ordered, with one exception: jobs with priorities that exceed 100 are globally prioritized - across all batches (the top ones are submitted before any other job in any other batch is).
+note the 'priority' field and its score. jobs are submitted in priority groups in descending order. first, all jobs within a batch with the highest priority score will be submitted. the next-ranked priority group will be submitted only once they have completed, and so on. this allows one, for example, to separate the execution of a Map step and a Reduce step when implementing a MapReduce workflow. the absolute scores assigned as priorities can be arbitrary as long as they are ordered, with one exception: jobs with priorities that exceed 100 are globally prioritized - across all batches (the top ones are submitted before any other job in any other batch is).
 
 note, that some system-specific definitions appear at the top of the file pbsmgr.py.
 
@@ -54,7 +54,7 @@ for each job, along with a title containing the batch-id and name, get-queue wil
 
 * complete: after a job terminates successfully (with a valid result).
 
-* collected: after result has been successfully handled by a downstream job and its output data is no longer needed (and intermediate data has usually been deleted).
+* collected: after result has been successfully handled by a downstream job and its output data is no longer needed (and intermediate data has usually been deleted). for example, this job may be part of a Map step, and its output has been recently processed by a Reduce step in a MapReduce workflow.
 
 NOTE, that additional job states may be arbitrarily defined by the user (simply by updating the metadata accordingly during the run, see example/job.py).
 
