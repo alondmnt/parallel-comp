@@ -12,7 +12,7 @@ import os
 import subprocess
 import time
 import pickle
-pickle.HIGHEST_PROTOCOL = 2
+pickle.HIGHEST_PROTOCOL = 2  # for compatibility with python2
 import shutil
 import warnings
 from numpy.random import randint
@@ -193,7 +193,7 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
         if 'queue' in part:
             this_sub[2] = part['queue']
         if OutFile is None:
-            subprocess.call(this_sub + [part['script']])
+            part['submit_id'] = subprocess.check_output(this_sub + [part['script']]).decode('UTF-8').split('.')[0]
         else:
             OutFile.write(part['script'] + '\n')
 
@@ -260,7 +260,7 @@ def get_pbs_queue():
 def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
     """ Verbose mode prints a job report to screen, otherwise a dictionary Q
         is returned with the metadata of all jobs.
-        ResetMissing will set the state of jobs that failed to 'init'.
+        ResetMissing will set the state of jobs that failed while online.
         Display is an iterable of states that desired for display (other
         states will not be reported in Verbose mode).
         Filter is a dictionary with fields as keys and desired values
@@ -272,8 +272,10 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
             get_queue(Display={'complete'})
             will display only completed jobs.
 
-            get_queue(Filter={'name': 'awesome'})
-            will display only the batch named awesome. """
+            get_queue(name='awesome')
+            will display only the batch named awesome.
+            for a differences Display filtering and Filter see the README,
+            and look for [skip_flag] in the code. """
 
     # reads from global job queue file
     Q = pickle.load(open(QFile, 'rb'))
@@ -283,6 +285,9 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
     Qout = deepcopy(Q)
     missing = {}  # submitted but not running
     cnt = Counter()
+    cnt['total'] = 0
+    cnt['complete'] = 0
+    cnt['online'] = 0
     for BatchID in sorted(list(Q)):
         status = {}
         processed_part = []
@@ -316,8 +321,8 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
                     if pid in powQ:
                         if powQ[pid][1] == 'R':
                             pinfo['JobIndex'] = str(pinfo['JobIndex']) + '*'
-                            cnt['run'] += 1
-                    elif pinfo['status'] in {'submit', 'spawn'} and \
+                            cnt['online'] += 1
+                    elif pinfo['status'] in {'submit', 'spawn', 'run'} and \
                             'subtime' in pinfo:
                         if pinfo['subtime'] < curr_time:
                             dict_append(missing, BatchID, pinfo['JobIndex'])
@@ -358,11 +363,53 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
         cnt['complete'] += cnt['collected']
         print('\ntotal jobs on PBS queue: {}'.format(len(powQ)))
         try:
-             print('running/complete/total: {run}/{complete}/{total}'.format(**cnt))
+             print('running/complete/total: {online}/{complete}/{total}'.format(**cnt))
         except:
             pass
     else:
         return Qout
+
+
+def qdel_batch(BatchID):
+    """ this will run the PBS qdel command on the entire batch of jobs. """
+    for job in get_batch_info(BatchID):
+        qdel_job(JobInfo=job)
+
+
+def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
+    """ this will run the PBS qdel command on the given job. """
+    pid_keys = ['PBS_ID', 'submit_id']
+
+    if JobInfo is None:
+        JobInfo = get_job_info(BatchID, JobIndex, HoldFile=True)
+    if 'PBS_ID' not in JobInfo and 'submit_id' not in JobInfo:
+        print('qdel_job: unknown PBS_ID for {BatchID},{JobIndex}'.format(**JobInfo))
+        return
+
+    pid_list = []
+    for k in pid_keys:
+        if k in JobInfo:
+            JobInfo[k] = make_iter(JobInfo[k])
+            pid_list += JobInfo[k]
+
+    for pid in pid_list:
+        if not subprocess.call(['qdel', pid]):  # success
+            for k in pid_keys:
+                if k in JobInfo:
+                    try:
+                        JobInfo[k].remove(pid)
+                    except ValueError:
+                        pass
+
+    for k in pid_keys:
+        if k in JobInfo and len(JobInfo[k]) == 1:  # back to single ID
+            JobInfo[k] = JobInfo[k][0]
+        if k in JobInfo and not len(JobInfo[k]):  # all deleted
+            del JobInfo[k]
+#            if k == 'submit_id':
+            JobInfo['status'] = 'init'
+
+    update_job(JobInfo, Release=True)
 
 
 def get_batch_info(BatchID):
@@ -388,7 +435,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False):
             JobInfo = pickle.load(open(get_job_file(BatchID, JobIndex), 'rb'))
             tries += 1
             if tries > 10:
-                raise Exception('cannot update job info')
+                raise Exception('cannot update job info for {}/{}'.format(BatchID, JobIndex))
         JobInfo['updating_info'] = True
         update_job(JobInfo)
     if SetID:
@@ -404,6 +451,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False):
         else:
             JobInfo['PBS_ID'] = PBS_ID
             JobInfo['hostname'] = hostname
+            JobInfo['status'] = 'run'
         dict_append(JobInfo, 'stdout', '{}/{}/logs/{}'.format(JobDir, BatchID, LogOut))
         dict_append(JobInfo, 'stderr', '{}/{}/logs/{}'.format(JobDir, BatchID, LogErr))
         update_job(JobInfo, Release=True)
@@ -467,7 +515,11 @@ def add_job_to_queue(Jobs):
 
 
 def set_complete(BatchID, JobIndex):
-    set_job_field(BatchID, JobIndex, Fields={'status': 'complete'}, Unless={})
+    JobInfo = get_job_info(BatchID, JobIndex, HoldFile=True)
+    JobInfo['qstat'] = get_qstat()
+    JobInfo['status'] = 'complete'
+    update_job(JobInfo, Release=True)
+#    set_job_field(BatchID, JobIndex, Fields={'status': 'complete'}, Unless={})
 
 
 def set_job_field(BatchID, JobIndex, Fields={'status': 'init'},
@@ -632,7 +684,7 @@ def spawn_complete(JobInfo):
 
         else:
             # reinstate job id and submit status (so it is recognized by get_queue())
-            JobInfo['status'] = 'submit'
+            JobInfo['status'] = 'run'  # 'submit'
             JobInfo['hostname'] = hostname
             JobInfo['PBS_ID'] = PBS_ID
             update_job(JobInfo)
