@@ -16,7 +16,7 @@ import zlib
 
 import pandas as pd
 
-from pbsmgr import QFile
+from pbsmgr import QFile, init_db, pack_job
 
 
 def upgrade_db(QFile=QFile):
@@ -31,34 +31,6 @@ def connect(QFile, exists_OK=True, **kwargs):
     return sqlite3.connect(db_file, **kwargs)
 
 
-def init_db(QFile=QFile):
-    """ creating tables """
-
-    conn = connect(QFile, exists_OK=False)
-
-    # keeping the main searchable fields here
-    conn.execute("""CREATE TABLE batch(
-            BatchID     INT     PRIMARY KEY,
-            name        TEXT    NOT NULL,
-            organism    TEXT    NOT NULL,
-            data_type   TEXT    NOT NULL
-            );""")
-
-    # keeping just the essentials as separate columns, rest in the metadata JSON
-    conn.execute("""CREATE TABLE job(
-            JobID       INTEGER     PRIMARY KEY AUTOINCREMENT,
-            JobIndex    INT     NOT NULL,
-            BatchID     INT     NOT NULL,
-            status      TEXT    NOT NULL,
-            priority    INT     NOT NULL,
-            metadata    TEXT    NOT NULL,
-            md5         TEXT    NOT NULL
-            );""")
-
-    conn.commit()
-    conn.close()
-
-
 def populate_db(QFile=QFile):
     """ add all currently queued jobs to new DB. """
 
@@ -71,15 +43,12 @@ def populate_db(QFile=QFile):
                      [batch_id, '/'.join(batch[0]['name']),
                       batch[0]['organism'], batch[0]['data_type']])
         for job in batch:
-            metadata = zlib.compress(bytes(json.dumps(job, default=set_default),
-                                           'UTF-8'))
-            md5 = hashlib.md5(metadata).hexdigest()
+            metadata = pack_job(job)
             conn.execute("""INSERT INTO job(JobIndex, BatchID, status,
                                             priority, metadata, md5)
                             VALUES (?,?,?,?,?,?)""",
                          [job['JobIndex'], batch_id, job['status'],
-                          job['priority'],
-                          metadata, md5])
+                          job['priority'], metadata, job['md5']])
 
     conn.commit()
 

@@ -13,6 +13,7 @@ import subprocess
 import time
 import pickle
 pickle.HIGHEST_PROTOCOL = 2  # for compatibility with python2
+from datetime import datetime
 import json
 import hashlib
 import shutil
@@ -98,10 +99,10 @@ def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False, **Fil
     """
     BATCH/JOB PRIORITY RULES
     1. higher gets precedence - equal priority submitted in parallel.
-    2. each part has a priority - determines precedence within job.
-       (we will not start submitting part with priority X until all
-       part with priority Y>X finished.)
-    3. job priority - max of part-priorities. precedence between jobs
+    2. each job has a priority - determines precedence within job.
+       (we will not start submitting job with priority X until all
+       job with priority Y>X finished.)
+    3. job priority - max of job-priorities. precedence between jobs
        is given only when priorities are above 100.
     """
     job_priority = {j: max([0] + [p['priority'] for p in Q[j]
@@ -157,16 +158,16 @@ def make_iter(var):
 
 
 def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
-    for j in make_iter(BatchID):
-        JobInfo = get_batch_info(j)
-        job_priority = max([0] + [p['priority'] for p in JobInfo
-                                  if p['status'] not in
+    for batch in make_iter(BatchID):
+        BatchInfo = get_batch_info(batch)
+        job_priority = max([0] + [j['priority'] for j in BatchInfo
+                                  if j['status'] not in
                                   {'complete', 'collected'}])
-        for part in JobInfo:
-            if part['priority'] < job_priority:
+        for job in BatchInfo:
+            if job['priority'] < job_priority:
                 continue
-            if part['status'] == 'init':
-                submit_one_job(j, part['JobIndex'], OutFile=OutFile)
+            if job['status'] == 'init':
+                submit_one_job(batch, job['JobIndex'], OutFile=OutFile)
                 SubCount += 1
                 if SubCount >= MaxJobs:
                     break
@@ -184,43 +185,42 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
 
     Qsub = ['qsub', '-q', PBS_queue, '-e', ErrDir, '-o', OutDir, '-l']
 
-    for p in make_iter(JobIndex):
-        part = get_job_info(BatchID, p, HoldFile=True)
-        print('submiting:\t{}'.format(part['script']))
-        if part['status'] != 'init':
+    for j in make_iter(JobIndex):
+        job = get_job_info(BatchID, j, HoldFile=True)
+        print('submiting:\t{}'.format(job['script']))
+        if job['status'] != 'init':
             warnings.warn('already submitted')
-        if 'resources' in part:
-            this_res = part['resources']
+        if 'resources' in job:
+            this_res = job['resources']
         else:
             this_res = DefResource
         this_sub = Qsub + [','.join(['{}={}'.format(k, v)
                            for k, v in sorted(this_res.items())])]
-        if 'queue' in part:
-            this_sub[2] = part['queue']
+        if 'queue' in job:
+            this_sub[2] = job['queue']
         if OutFile is None:
-            part['submit_id'] = subprocess.check_output(this_sub + [part['script']]).decode('UTF-8').split('.')[0]
+            job['submit_id'] = subprocess.check_output(this_sub + [job['script']]).decode('UTF-8').split('.')[0]
         else:
-            OutFile.write(part['script'] + '\n')
+            OutFile.write(job['script'] + '\n')
 
-#        print(this_sub + [part['script']])
         if not Spawn:
-            part['status'] = 'submit'
-            part['subtime'] = time.time()
-            if 'PBS_ID' in part:
-                del part['PBS_ID']
-            if 'qstat' in part:
-                del part['qstat']
+            job['status'] = 'submit'
+            job['subtime'] = time.time()
+            if 'PBS_ID' in job:
+                del job['PBS_ID']
+            if 'qstat' in job:
+                del job['qstat']
         else:
-            if part['status'] != 'spawn':
+            if job['status'] != 'spawn':
                 # remove previous information
-                part['status'] = 'spawn'
-                part['PBS_ID'] = []
-                part['hostname'] = []
-                part['spawn_id'] = []
-                part['spawn_complete'] = set()
-                part['spawn_resub'] = set()
+                job['status'] = 'spawn'
+                job['PBS_ID'] = []
+                job['hostname'] = []
+                job['spawn_id'] = []
+                job['spawn_complete'] = set()
+                job['spawn_resub'] = set()
 
-        update_job(part, Release=True)
+        update_job(job, Release=True)
 
 
 def parse_qstat(text):
@@ -326,9 +326,9 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
     if ResetMissing:
         for BatchID in missing:
             for JobIndex in missing[BatchID]:
-                PartDir = JobDir + '{}/{}'.format(BatchID, JobIndex)
-                if os.path.isdir(PartDir):
-                    shutil.rmtree(PartDir)
+                jobDir = JobDir + '{}/{}'.format(BatchID, JobIndex)
+                if os.path.isdir(jobDir):
+                    shutil.rmtree(jobDir)
                 set_job_field(BatchID, JobIndex, {'status': 'init'})
 
     if Verbose:
@@ -352,8 +352,9 @@ def get_sql_queue(QFile, Filter):
                                           b.data_type
                                    FROM batch b INNER JOIN job j 
                                    ON j.BatchID = b.BatchID) """ +
-                               'WHERE ' + ' AND '.join(
-                               parse_filter(Filter)), conn)
+                               ('WHERE ' + ' AND '.join(
+                                parse_filter(Filter))
+                                if len(Filter) else ''), conn)
     return df.iloc[:, 1:].groupby('BatchID')\
         .apply(lambda df: df.sort_values('JobIndex')['metadata']\
                .apply(lambda x: json.loads(zlib.decompress(x).decode()))\
@@ -463,7 +464,8 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False):
 def get_job_template(SetID=False):
     res = deepcopy(JobTemplate)
     if SetID:
-        res['BatchID'] = round(time.time())
+        time.sleep(1)  # precaution against non-unique IDs
+        res['BatchID'] = int(datetime.now().strftime('%Y%m%d%H%M%S'))
     return res
 
 
@@ -486,17 +488,22 @@ def update_job(JobInfo, Release=False):
         if md5[0][0] != JobInfo['md5']:
             raise Exception(f'job ({BatchID}, {JobIndex}) was overwritten by another process')
 
-        del JobInfo['md5']
-        metadata = zlib.compress(bytes(json.dumps(JobInfo, default=set_default),
-                                       'UTF-8'))
-        md5 = hashlib.md5(metadata).hexdigest()
-        JobInfo['md5'] = md5
-
+        metadata = pack_job(JobInfo)
         conn.execute(f"""UPDATE job
                          SET metadata=?, md5=?, status=?, priority=? WHERE
                          BatchID={BatchID} AND
                          JobIndex={JobIndex}""",
-                         [metadata, md5, JobInfo['status'], JobInfo['priority']])
+                         [metadata, JobInfo['md5'],
+                          JobInfo['status'], JobInfo['priority']])
+
+
+def pack_job(job):
+    if 'md5' in job:
+        del job['md5']
+    metadata = zlib.compress(bytes(json.dumps(job, default=set_default),
+                                   'UTF-8'))
+    job['md5'] = hashlib.md5(metadata).hexdigest()
+    return metadata
 
 
 def set_default(obj):
@@ -511,15 +518,21 @@ def update_batch(batch):
 
 
 def add_batch_to_queue(BatchID, Jobs):
-    """ provide a list of job info *file names*, will replace any existing
-        batch. """
-    if os.path.exists(QFile):
-        Q = pickle.load(open(QFile, 'rb'))
-    else:
-        Q = {}  # init new queue file
-    Q[BatchID] = Jobs
-    pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
-    print('\njob {} (size {:,d}) added to queue ({})'.format(BatchID,
+    """ provide a list of job info dicts, will replace any existing
+        batch. unlike add_job_to_queue it ensures that BatchID doe not
+        exist in queue, and that all given jobs are from the same batch. """
+    if not os.path.isfile(QFile):
+        init_db(QFile)
+
+    Jobs = make_iter(Jobs)
+    if not all([BatchID == job['BatchID'] for job in Jobs]):
+        raise Exception(f'some jobs do not match BatchID={BatchID}')
+
+    if len(get_batch_info(BatchID)) > 0:
+        raise Exception(f'BatchID={BatchID} already exists')
+
+    add_job_to_queue(Jobs)
+    print('\nbatch {} (size {:,d}) added to queue ({})'.format(BatchID,
           len(Jobs), QFile))
 
 
@@ -527,21 +540,32 @@ def add_job_to_queue(Jobs):
     """ job info or a list of job info dicts supported.
         automatically sets the JobIndex id in each JobInfo,
         and saves the metdata. """
-    if os.path.exists(QFile):
-        Q = pickle.load(open(QFile, 'rb'))
-    else:
-        Q = {}  # init new queue file
-    if type(Jobs) is not list:
-        Jobs = [Jobs]
-    for part in Jobs:
-        BatchID = part['BatchID']
-        if BatchID not in Q:
-            # add a new batch
-            Q[BatchID] = []
-        part['JobIndex'] = len(Q[BatchID])
-        update_job(part)  # save metadata
-        Q[BatchID].append(part['jobfile'])
-    pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
+    if not os.path.isfile(QFile):
+        init_db(QFile)
+
+    batch_index = {}
+    with sqlite3.connect(QFile) as conn:
+        for job in make_iter(Jobs):
+            BatchID = job['BatchID']
+
+            # setting JobIndex automatically
+            if BatchID not in batch_index:
+                batch_index[BatchID] = len(get_batch_info(BatchID))
+            if batch_index[BatchID] == 0:
+                # init new batch
+                conn.execute("""INSERT INTO batch
+                                VALUES (?,?,?,?)""",
+                                [BatchID, '/'.join(job['name']),
+                                 job['organism'], job['data_type']])
+
+            job['JobIndex'] = batch_index[BatchID]
+            batch_index[BatchID] += 1
+            metadata = pack_job(job)
+            conn.execute("""INSERT INTO job(JobIndex, BatchID, status,
+                                            priority, metadata, md5)
+                            VALUES (?,?,?,?,?,?)""",
+                         [job['JobIndex'], BatchID, job['status'],
+                          job['priority'], metadata, job['md5']])
 
 
 def set_complete(BatchID, JobIndex):
@@ -549,64 +573,47 @@ def set_complete(BatchID, JobIndex):
     JobInfo['qstat'] = get_qstat()
     JobInfo['status'] = 'complete'
     update_job(JobInfo, Release=True)
-#    set_job_field(BatchID, JobIndex, Fields={'status': 'complete'}, Unless={})
 
 
 def set_job_field(BatchID, JobIndex, Fields={'status': 'init'},
-                   Unless={'status': ['complete', 'collected'],
-                           'func': 'build_genome',
-                           'updating_info': True}):
-    for p in make_iter(JobIndex):
-        part = get_job_info(BatchID, p, HoldFile=False)
+                  Unless={'status': ['complete', 'collected']}):
+    """ called with default args, this sets all jobs in progress
+        (unless completed) to `init` state. """
+    for j in make_iter(JobIndex):
+        job = get_job_info(BatchID, j, HoldFile=False)
 
-        skip_part = False
-        for k in Unless:  # this tests whether the part is protected
-            if k in part:
-                if part[k] in make_iter(Unless[k]):
-                    skip_part = True
-        if skip_part:
+        skip_job = False
+        for k in Unless:  # this tests whether the job is protected
+            if k in job:
+                if job[k] in make_iter(Unless[k]):
+                    skip_job = True
+        if skip_job:
             continue
 
         for k, v in Fields.items():
-#            if k in Unless:  # OLD: this tests whether the value being changed is protected
-#                if part[k] in make_iter(Unless[k]):
-#                    continue
-            part[k] = v
-        update_job(part, Release=True)
+            job[k] = v
+        update_job(job, Release=True)
 
 
 def set_batch_field(BatchID, Fields={'status': 'init'},
-                  Unless={'status': ['complete', 'collected'],
-                          'updating_info': True}):
-    # updates the specific parts' local job files (not global queue)
-    Q = pickle.load(open(QFile, 'rb'))
-    for j in make_iter(BatchID):
-        for part in range(len(Q[j])):
-            set_job_field(j, part, Fields, Unless)
-
-
-def recover_queue():
-    Q = {}
-    for dirpath, dirnames, filenames in os.walk(JobDir):
-        jid = os.path.basename(dirpath)
-        if not jid.isnumeric():
-            continue
-        jid = int(jid)
-        for f in filenames:
-            if f.find('info_') >= 0:
-                dict_append(Q, jid, dirpath + '/' + f)
-    pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
+                    Unless={'status': ['complete', 'collected']}):
+    """ calls set_job_field on the batch. """
+    for b in make_iter(BatchID):
+        BatchInfo = get_batch_info(b)
+        for job in BatchInfo:
+            set_job_field(b, job['JobIndex'], Fields, Unless)
 
 
 def remove_batch(BatchID):
-    for j in make_iter(BatchID):
-        WorkDir = JobDir + str(j)
-        if os.path.isdir(WorkDir):
-            shutil.rmtree(WorkDir)
-        Q = pickle.load(open(QFile, 'rb'))
-        if j in Q:
-            del Q[j]
-        Q = pickle.dump(Q, open(QFile, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
+    with sqlite3.connect(QFile) as conn:
+        for batch in make_iter(BatchID):
+            WorkDir = JobDir + str(batch)
+            if os.path.isdir(WorkDir):
+                shutil.rmtree(WorkDir)
+            conn.execute(f"""DELETE FROM batch
+                             WHERE BatchID={batch}""")
+            conn.execute(f"""DELETE FROM job
+                             WHERE BatchID={batch}""")
 
 
 # TODO: archive_batch(BatchID=None, Time=None)
@@ -631,8 +638,8 @@ def clean_temp_folders():
     Q = get_queue(Verbose=False)
     rmv_list = []
     for BatchID in Q.keys():
-        for part in Q[BatchID]:
-            tempdir = JobDir + '{}/{}'.format(BatchID, part['JobIndex'])
+        for job in Q[BatchID]:
+            tempdir = JobDir + '{}/{}'.format(BatchID, job['JobIndex'])
             if os.path.exists(tempdir):
                 shutil.rmtree(tempdir)
                 rmv_list.append(tempdir)
@@ -647,12 +654,11 @@ def dict_append(dictionary, key, value):
 
 
 def boost_batch_priority(BatchID, Booster=100):
-    Q = pickle.load(open(QFile, 'rb'))
-    for j in make_iter(BatchID):
-        for p in Q[j]:
-            part = pickle.load(open(p, 'rb'))
-            part['priority'] += Booster
-            update_job(part)
+    for batch in make_iter(BatchID):
+        BatchInfo = get_batch_info(batch)
+        for JobInfo in BatchInfo:
+            JobInfo['priority'] += Booster
+            update_job(JobInfo)
 
 
 def spawn_submit(JobInfo, N):
@@ -769,7 +775,7 @@ def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1):
         print('log is missing.\n{}'.format(LogFile))
         return
 
-    print('\n\n[[[{} log for {}/{}/part_{}:]]]\n'.format(LogKey, BatchID,
+    print('\n\n[[[{} log for {}/{}/job_{}:]]]\n'.format(LogKey, BatchID,
           '/'.join(JobInfo['name']), JobIndex))
     with open(LogFile, 'r') as fid:
         for line in fid:
@@ -809,3 +815,31 @@ def generate_data(JobInfo, Data):
     if not os.path.isdir(os.path.dirname(JobInfo['data'])):
         os.makedirs(os.path.dirname(JobInfo['data']))
     pickle.dump(Data, open(JobInfo['data'], 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def init_db(QFile=QFile):
+    """ creating tables """
+
+    conn = sqlite3.connect(QFile, exists_OK=False)
+
+    # keeping the main searchable fields here
+    conn.execute("""CREATE TABLE batch(
+                    BatchID     INT     PRIMARY KEY,
+                    name        TEXT    NOT NULL,
+                    organism    TEXT    NOT NULL,
+                    data_type   TEXT    NOT NULL
+                    );""")
+
+    # keeping just the essentials as separate columns, rest in the metadata JSON
+    conn.execute("""CREATE TABLE job(
+                    JobID       INTEGER     PRIMARY KEY AUTOINCREMENT,
+                    JobIndex    INT     NOT NULL,
+                    BatchID     INT     NOT NULL,
+                    status      TEXT    NOT NULL,
+                    priority    INT     NOT NULL,
+                    metadata    TEXT    NOT NULL,
+                    md5         TEXT    NOT NULL
+                    );""")
+
+    conn.commit()
+    conn.close()
