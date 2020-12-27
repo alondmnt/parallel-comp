@@ -13,16 +13,21 @@ import subprocess
 import time
 import pickle
 pickle.HIGHEST_PROTOCOL = 2  # for compatibility with python2
+import json
+import hashlib
 import shutil
+import sqlite3
 import warnings
+import zlib
 from numpy.random import randint
+import pandas as pd
 from collections import Counter
 from copy import deepcopy
 
 
 ServerPath = '/tamir1/'
 ServerHost = 'tau.ac.il'
-QFile = '../jobs/job_queue.pkl'
+QFile = 'T:/dalon/RP/Consistency/jobs/job_queue.db'  # '../jobs/job_queue.pkl'
 JobDir = '../jobs/'
 PBS_queue = 'tamirs3'
 
@@ -263,10 +268,8 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
         ResetMissing will set the state of jobs that failed while online.
         Display is an iterable of states that desired for display (other
         states will not be reported in Verbose mode).
-        Filter is a dictionary with fields as keys and desired values
-        as values, which is used to select jobs according to criteria. NOTE,
-        that entire batch will not be reported if any of its jobs does not
-        match the given filter.
+        additional keyword arguments are used to filter batches by their
+        fields.
 
         Example:
             get_queue(Display={'complete'})
@@ -278,11 +281,10 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
             and look for [skip_flag] in the code. """
 
     # reads from global job queue file
-    Q = pickle.load(open(QFile, 'rb'))
+    Q = get_sql_queue(QFile, Filter)
     curr_time = time.time()
     powQ = get_pbs_queue()
 
-    Qout = deepcopy(Q)
     missing = {}  # submitted but not running
     cnt = Counter()
     cnt['total'] = 0
@@ -290,57 +292,28 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
     cnt['online'] = 0
     for BatchID in sorted(list(Q)):
         status = {}
-        processed_part = []
-        skip_flag = False
-        for p, pfile in enumerate(Q[BatchID]):
-            if not os.path.isfile(pfile):
-                continue
-            try:
-                pinfo = pickle.load(open(pfile, 'rb'))
-            except:
-                dict_append(status, 'error', p)
-                continue
-            if len(Filter):
-                skip_flag = False  # skip unless all filters matched (AND)
-                for k, v in Filter.items():
-                    if k not in pinfo:
-                        continue
-                    for filt in make_iter(v):
-                        one_match = False
-                        for n in make_iter(pinfo[k]):
-                            if filt in n:
-                                one_match = True
-                        if not one_match:
-                            skip_flag = True
-                if skip_flag:
-                    del Qout[BatchID]  # skip entire batch if part has a match
-                    break
+        for p, pinfo in enumerate(Q[BatchID]):
             cnt['total'] += 1
+            job_index = pinfo['JobIndex']
+
+            # checking job against current PBS queue
+            # (for online and crashed jobs)
             if 'PBS_ID' in pinfo:
                 for pid in make_iter(pinfo['PBS_ID']):
                     if pid in powQ:
                         if powQ[pid][1] == 'R':
-                            pinfo['JobIndex'] = str(pinfo['JobIndex']) + '*'
+                            job_index = str(job_index) + '*'
                             cnt['online'] += 1
                     elif pinfo['status'] in {'submit', 'spawn', 'run'} and \
                             'subtime' in pinfo:
                         if pinfo['subtime'] < curr_time:
-                            dict_append(missing, BatchID, pinfo['JobIndex'])
+                            dict_append(missing, BatchID, job_index)
             cnt[pinfo['status']] += 1
-            dict_append(status, pinfo['status'], pinfo['JobIndex'])
-            Qout[BatchID][p] = pinfo
-            processed_part.append(p)
-
-        if skip_flag:
-            continue
-
-        Q[BatchID] = [Q[BatchID][p] for p in processed_part]
-        Qout[BatchID] = [Qout[BatchID][p] for p in processed_part]
+            dict_append(status, pinfo['status'], job_index)
 
         if len(Q[BatchID]) == 0:
             print('\nempty {}'.format(BatchID))
             del Q[BatchID]
-            del Qout[BatchID]
             continue
 
         if Verbose:
@@ -367,7 +340,30 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
         except:
             pass
     else:
-        return Qout
+        return Q
+
+
+def get_sql_queue(QFile, Filter):
+    with sqlite3.connect(QFile) as conn:
+        df = pd.read_sql_query('SELECT * FROM ' +
+                               """(SELECT j.*,
+                                          b.name,
+                                          b.organism,
+                                          b.data_type
+                                   FROM batch b INNER JOIN job j 
+                                   ON j.BatchID = b.BatchID) """ +
+                               'WHERE ' + ' AND '.join(
+                               parse_filter(Filter)), conn)
+    return df.iloc[:, 1:].groupby('BatchID')\
+        .apply(lambda df: df.sort_values('JobIndex')['metadata']\
+               .apply(lambda x: json.loads(zlib.decompress(x).decode()))\
+               .tolist()).to_dict()
+
+
+def parse_filter(Filter):
+    return ['(' + ' OR '.join([f'({k} = "{sub_v}")' if isinstance(sub_v, str)
+                               else f'({k} = {sub_v})' for sub_v in make_iter(v)])
+            + ')' for k, v in Filter.items()]
 
 
 def qdel_batch(BatchID):
@@ -413,48 +409,54 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
 
 
 def get_batch_info(BatchID):
-    Q = pickle.load(open(QFile, 'rb'))
-    return [get_job_info(BatchID, part) for part in range(len(Q[BatchID]))]
+    with sqlite3.connect(QFile) as conn:
+        batch_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
+                                            BatchID={BatchID}"""))
+    assert all([job[-1] == hashlib.md5(job[-2]).hexdigest()
+                for job in batch_query])
 
-
-def get_job_file(BatchID, JobIndex):
-    Q = pickle.load(open(QFile, 'rb'))
-    return Q[BatchID][JobIndex].replace(ServerPath, LocalPath)
+    return [dict(json.loads(zlib.decompress(job[-2])), md5=job[-1])
+            for job in batch_query]
 
 
 def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False):
-    if SetID:
-        HoldFile = True
-    JobInfo = pickle.load(open(get_job_file(BatchID, JobIndex), 'rb'))
-    if 'updating_info' not in JobInfo:
-        JobInfo['updating_info'] = False
-    if HoldFile:
-        tries = 1
-        while JobInfo['updating_info']:
-            time.sleep(randint(1, 10))
-            JobInfo = pickle.load(open(get_job_file(BatchID, JobIndex), 'rb'))
-            tries += 1
-            if tries > 10:
-                raise Exception('cannot update job info for {}/{}'.format(BatchID, JobIndex))
-        JobInfo['updating_info'] = True
-        update_job(JobInfo)
-    if SetID:
-        if JobInfo['status'] == 'spawn':
-            JobInfo['PBS_ID'].append(PBS_ID)
-            JobInfo['hostname'].append(hostname)
-            # while the following IDs are set asynchronously, we can test if
-            # were set correctly by comparing spawn_count to length of spawn_id
-            next_id = 0
-            while next_id in JobInfo['spawn_id']:  # find missing
-                next_id += 1
-            JobInfo['spawn_id'].append(next_id)
-        else:
-            JobInfo['PBS_ID'] = PBS_ID
-            JobInfo['hostname'] = hostname
-            JobInfo['status'] = 'run'
-        dict_append(JobInfo, 'stdout', '{}/{}/logs/{}'.format(JobDir, BatchID, LogOut))
-        dict_append(JobInfo, 'stderr', '{}/{}/logs/{}'.format(JobDir, BatchID, LogErr))
-        update_job(JobInfo, Release=True)
+    """ HoldFile is ignored but kept for backward compatibility. """
+    with sqlite3.connect(QFile) as conn:
+        job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
+                                          BatchID={BatchID} AND
+                                          JobIndex={JobIndex}"""))
+        if len(job_query) != 1:
+            raise Exception('job is not unique (%d)' % len(job_query))
+        job_query = job_query[0]
+    assert job_query[-1] == hashlib.md5(job_query[-2]).hexdigest()
+    JobInfo = json.loads(zlib.decompress(job_query[-2]))
+    JobInfo['md5'] = job_query[-1]
+
+    if not SetID:
+        return JobInfo
+
+    if JobInfo['status'] == 'spawn':
+        JobInfo['PBS_ID'].append(PBS_ID)
+        JobInfo['hostname'].append(hostname)
+        # while the following IDs are set asynchronously, we can test if
+        # were set correctly by comparing spawn_count to length of spawn_id
+        next_id = 0
+        while next_id in JobInfo['spawn_id']:  # find missing
+            next_id += 1
+        if next_id >= JobInfo['spawn_count']:
+                raise Exception('bad spawn_id {} >= {}, too many submitted'.format(
+                                next_id, JobInfo['spawn_count']))
+        JobInfo['spawn_id'].append(next_id)
+        print('spawn_id', next_id)
+    else:
+        JobInfo['PBS_ID'] = PBS_ID
+        JobInfo['hostname'] = hostname
+        JobInfo['status'] = 'run'
+
+    dict_append(JobInfo, 'stdout', '{}/{}/logs/{}'.format(JobDir, BatchID, LogOut))
+    dict_append(JobInfo, 'stderr', '{}/{}/logs/{}'.format(JobDir, BatchID, LogErr))
+    update_job(JobInfo, Release=True)
+
     return JobInfo
 
 
@@ -466,13 +468,41 @@ def get_job_template(SetID=False):
 
 
 def update_job(JobInfo, Release=False):
-    # updates the specific part's local job file (not global queue)
-    if Release:
-        JobInfo['updating_info'] = False
+    """ Release is ignored but kept for backward compatibility. """
+
     if JobInfo['jobfile'] is None:
         JobInfo['jobfile'] = JobDir + '{}/meta_{}.pkl'.format(
                 JobInfo['BatchID'], JobInfo['JobIndex'])
-    pickle.dump(JobInfo, open(JobInfo['jobfile'], 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
+
+    with sqlite3.connect(QFile) as conn:
+        BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
+        md5 = list(conn.execute(f"""SELECT md5 FROM job WHERE
+                                    BatchID={BatchID} AND
+                                    JobIndex={JobIndex}"""))
+        if len(md5) != 1:
+            raise Exception('job is not unique (%d)' % len(md5))
+        # here we're ensuring that JobInfo contains an updated version
+        # of the data, that is consistent with the DB
+        if md5[0][0] != JobInfo['md5']:
+            raise Exception(f'job ({BatchID}, {JobIndex}) was overwritten by another process')
+
+        del JobInfo['md5']
+        metadata = zlib.compress(bytes(json.dumps(JobInfo, default=set_default),
+                                       'UTF-8'))
+        md5 = hashlib.md5(metadata).hexdigest()
+        JobInfo['md5'] = md5
+
+        conn.execute(f"""UPDATE job
+                         SET metadata=?, md5=?, status=?, priority=? WHERE
+                         BatchID={BatchID} AND
+                         JobIndex={JobIndex}""",
+                         [metadata, md5, JobInfo['status'], JobInfo['priority']])
+
+
+def set_default(obj):
+    if isinstance(obj, set):
+        return list(obj)
+    raise TypeError
 
 
 def update_batch(batch):
