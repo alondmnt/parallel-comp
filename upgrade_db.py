@@ -16,11 +16,12 @@ import zlib
 
 import pandas as pd
 
-from pbsmgr import QFile, init_db, pack_job
+from pbsmgr import QFile, init_db, pack_job, unpack_job, get_sql_queue
 
 
 def upgrade_db(QFile=QFile):
-    init_db(QFile)
+    with connect(QFile, exists_OK=False) as conn:
+        init_db(conn)
     populate_db(QFile)
 
 
@@ -51,14 +52,13 @@ def populate_db(QFile=QFile):
                           job['priority'], metadata, job['md5']])
 
     conn.commit()
+    conn.close()
 
     # test new DB
-    reconstructed_Q = get_sql_queue(conn)
-    assert all([json.dumps(reconstructed_Q[b]) == 
+    reconstructed_Q = get_sql_queue('.'.join(QFile.split('.')[:-1] + ['db']))
+    assert all([json.dumps(reconstructed_Q[b], default=set_default) == 
                 json.dumps(Q[b], default=set_default)
                 for b in Q])
-
-    conn.close()
 
 
 def get_queue(QFile):
@@ -88,28 +88,6 @@ def get_queue(QFile):
             continue
 
     return Q
-
-
-def get_sql_queue(conn):
-    df = pd.read_sql_query("""SELECT j.*,
-                                     b.name,
-                                     b.organism,
-                                     b.data_type
-                               FROM batch b INNER JOIN job j 
-                               ON j.BatchID = b.BatchID""", conn)
-    return df.iloc[:, 1:].groupby('BatchID')\
-        .apply(lambda df: df.sort_values('JobIndex')['metadata']\
-               .apply(lambda x: json.loads(zlib.decompress(x).decode()))\
-               .tolist()).to_dict()
-
-
-def make_iter(obj):
-    if isinstance(obj, str):
-        return [obj]
-    try:
-        return list(obj)
-    except:
-        return [obj]
 
 
 def rename_key(d, old_key, new_key):

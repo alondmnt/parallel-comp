@@ -20,7 +20,6 @@ import shutil
 import sqlite3
 import warnings
 import zlib
-from numpy.random import randint
 import pandas as pd
 from collections import Counter
 from copy import deepcopy
@@ -343,7 +342,7 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
         return Q
 
 
-def get_sql_queue(QFile, Filter):
+def get_sql_queue(QFile, Filter={}):
     with sqlite3.connect(QFile) as conn:
         df = pd.read_sql_query('SELECT * FROM ' +
                                """(SELECT j.*,
@@ -356,8 +355,8 @@ def get_sql_queue(QFile, Filter):
                                 parse_filter(Filter))
                                 if len(Filter) else ''), conn)
     return df.iloc[:, 1:].groupby('BatchID')\
-        .apply(lambda df: df.sort_values('JobIndex')['metadata']\
-               .apply(lambda x: json.loads(zlib.decompress(x).decode()))\
+        .apply(lambda df: df.sort_values('JobIndex')[['metadata', 'md5']]\
+               .apply(unpack_job, axis=1)\
                .tolist()).to_dict()
 
 
@@ -413,11 +412,8 @@ def get_batch_info(BatchID):
     with sqlite3.connect(QFile) as conn:
         batch_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
                                             BatchID={BatchID}"""))
-    assert all([job[-1] == hashlib.md5(job[-2]).hexdigest()
-                for job in batch_query])
 
-    return [dict(json.loads(zlib.decompress(job[-2])), md5=job[-1])
-            for job in batch_query]
+    return [unpack_job(job) for job in batch_query]
 
 
 def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False):
@@ -429,9 +425,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False):
         if len(job_query) != 1:
             raise Exception('job is not unique (%d)' % len(job_query))
         job_query = job_query[0]
-    assert job_query[-1] == hashlib.md5(job_query[-2]).hexdigest()
-    JobInfo = json.loads(zlib.decompress(job_query[-2]))
-    JobInfo['md5'] = job_query[-1]
+    JobInfo = unpack_job(job_query)
 
     if not SetID:
         return JobInfo
@@ -497,19 +491,19 @@ def update_job(JobInfo, Release=False):
                           JobInfo['status'], JobInfo['priority']])
 
 
-def pack_job(job):
-    if 'md5' in job:
-        del job['md5']
-    metadata = zlib.compress(bytes(json.dumps(job, default=set_default),
-                                   'UTF-8'))
-    job['md5'] = hashlib.md5(metadata).hexdigest()
+def pack_job(JobInfo):
+    if 'md5' in JobInfo:
+        del JobInfo['md5']
+    metadata = zlib.compress(pickle.dumps(JobInfo))
+    JobInfo['md5'] = hashlib.md5(metadata).hexdigest()
     return metadata
 
 
-def set_default(obj):
-    if isinstance(obj, set):
-        return list(obj)
-    raise TypeError
+def unpack_job(job_query):
+    assert job_query[-1] == hashlib.md5(job_query[-2]).hexdigest()
+    JobInfo = pickle.loads(zlib.decompress(job_query[-2]))
+    JobInfo['md5'] = job_query[-1]
+    return JobInfo
 
 
 def update_batch(batch):
@@ -817,10 +811,8 @@ def generate_data(JobInfo, Data):
     pickle.dump(Data, open(JobInfo['data'], 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def init_db(QFile=QFile):
-    """ creating tables """
-
-    conn = sqlite3.connect(QFile, exists_OK=False)
+def init_db(conn):
+    """ creating tables for a given sqlite3 connection. """
 
     # keeping the main searchable fields here
     conn.execute("""CREATE TABLE batch(
@@ -840,6 +832,3 @@ def init_db(QFile=QFile):
                     metadata    TEXT    NOT NULL,
                     md5         TEXT    NOT NULL
                     );""")
-
-    conn.commit()
-    conn.close()
