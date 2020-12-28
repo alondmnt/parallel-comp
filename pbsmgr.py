@@ -411,7 +411,8 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
 def get_batch_info(BatchID):
     with sqlite3.connect(QFile) as conn:
         batch_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
-                                            BatchID={BatchID}"""))
+                                            BatchID={BatchID}
+                                            ORDER BY JobIndex"""))
 
     return [unpack_job(job) for job in batch_query]
 
@@ -472,7 +473,7 @@ def update_job(JobInfo, Release=False):
 
     with sqlite3.connect(QFile) as conn:
         BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
-        md5 = list(conn.execute(f"""SELECT md5 FROM job WHERE
+        md5 = list(conn.execute(f"""SELECT md5, JobID FROM job WHERE
                                     BatchID={BatchID} AND
                                     JobIndex={JobIndex}"""))
         if len(md5) != 1:
@@ -483,12 +484,28 @@ def update_job(JobInfo, Release=False):
             raise Exception(f'job ({BatchID}, {JobIndex}) was overwritten by another process')
 
         metadata = pack_job(JobInfo)
-        conn.execute(f"""UPDATE job
-                         SET metadata=?, md5=?, status=?, priority=? WHERE
-                         BatchID={BatchID} AND
-                         JobIndex={JobIndex}""",
-                         [metadata, JobInfo['md5'],
-                          JobInfo['status'], JobInfo['priority']])
+        # we INSERT, then DELETE the old entry, to catch events where two jobs
+        # somehow managed to write (almost) concurrently - the second will fail
+        conn.execute("""INSERT INTO job(JobIndex, BatchID, status,
+                                        priority, metadata, md5)
+                        VALUES (?,?,?,?,?,?)""",
+                     [JobInfo['JobIndex'], JobInfo['BatchID'],
+                      JobInfo['status'], JobInfo['priority'],
+                      metadata, JobInfo['md5']])
+
+        conn.execute("""DELETE FROM job
+                        WHERE JobID=? AND BatchID=? AND JobIndex=?""",
+                     [md5[0][1], JobInfo['BatchID'], JobInfo['JobIndex']])
+        if conn.total_changes < 2:
+            raise Exception('failed to update job' +
+                            '(probably trying to delete an already deleted entry)')
+
+#        conn.execute(f"""UPDATE job
+#                         SET metadata=?, md5=?, status=?, priority=? WHERE
+#                         BatchID={BatchID} AND
+#                         JobIndex={JobIndex}""",
+#                         [metadata, JobInfo['md5'],
+#                          JobInfo['status'], JobInfo['priority']])
 
 
 def pack_job(JobInfo):
