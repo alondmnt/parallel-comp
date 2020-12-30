@@ -149,7 +149,7 @@ def make_iter(var):
     if type(var) == str:
         var = [var]
     try:
-        test = iter(var)
+        iter(var)
     except:
         var = [var]
     return var
@@ -227,7 +227,7 @@ def parse_qstat(text):
 #    print('\n')
     for line in text.splitlines():
 #        print(line)
-        hit = re.match('([\w.]*) = ([\w\s:_\-/]*)', line.strip())
+        hit = re.match(r'([\w.]*) = ([\w\s:_\-/]*)', line.strip())
         if hit is not None:
             JobInfo[hit.group(1)] = hit.group(2)
     return JobInfo
@@ -253,9 +253,9 @@ def get_pbs_queue():
                                    universal_newlines=True)
     data = data.split('\n')
     for line in data:
-        job = re.match('(\d+).', line)  # power
+        job = re.match(r'(\d+).', line)  # power
         if job:
-            line = re.split('\s+', line)
+            line = re.split(r'\s+', line)
             Q[job.group(1)] = [line[3], line[9]]
     return Q
 
@@ -289,8 +289,13 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
     cnt['complete'] = 0
     cnt['online'] = 0
     for BatchID in sorted(list(Q)):
+        if len(Q[BatchID]) == 0:
+            print('\nempty {}'.format(BatchID))
+            del Q[BatchID]
+            continue
+
         status = {}
-        for p, pinfo in enumerate(Q[BatchID]):
+        for pinfo in Q[BatchID]:
             cnt['total'] += 1
             job_index = pinfo['JobIndex']
 
@@ -308,11 +313,6 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
                             dict_append(missing, BatchID, job_index)
             cnt[pinfo['status']] += 1
             dict_append(status, pinfo['status'], job_index)
-
-        if len(Q[BatchID]) == 0:
-            print('\nempty {}'.format(BatchID))
-            del Q[BatchID]
-            continue
 
         if Verbose:
             if Display is not None:
@@ -731,7 +731,7 @@ def spawn_submit(JobInfo, N):
     set_job_field(JobInfo['BatchID'], JobInfo['JobIndex'],
                    Fields={'spawn_count': N+1,
                            'stdout': [], 'stderr': []}, Unless={})
-    for i in range(N):
+    for _ in range(N):
         time.sleep(10)  # avoid collisions
         submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
 
@@ -749,9 +749,9 @@ def spawn_complete(JobInfo):
         # e.g., if job has been re-submitted by some one/job
         # (unknown logic follows)
         raise Exception('unknown status [{}] encountered for spawned ' +
-                        'job ({}, {})'.format(JobInfo['status'],
-                                              JobInfo['BatchID'],
-                                              JobInfo['JobIndex']))
+                        'job ({}, {}, {})'.format(JobInfo['status'],
+                                                  JobInfo['BatchID'],
+                                                  JobInfo['JobIndex']))
 
     try:
         JobInfo['PBS_ID'].remove(PBS_ID)
@@ -797,14 +797,14 @@ def spawn_resubmit(BatchID, JobIndex):
     """ submit missing spawns. """
     JobInfo = get_job_info(BatchID, JobIndex)
     if JobInfo['status'] == 'spawn':
-        for i in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
+        for _ in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
             time.sleep(10)
             submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
 
 
 def isiterable(p_object):
     try:
-        it = iter(p_object)
+        iter(p_object)
     except TypeError:
         return False
     return True
