@@ -27,9 +27,9 @@ from copy import deepcopy
 
 ServerPath = '/tamir1/'
 ServerHost = 'tau.ac.il'
-QFile = 'T:/dalon/RP/Consistency/jobs/job_queue.db'  # '../jobs/job_queue.pkl'
+QFile = '/tamir1/dalon/RP/Consistency/jobs/job_queue.db'  # '../jobs/job_queue.pkl'
 JobDir = '../jobs/'
-PBS_queue = 'tamirs3'
+PBS_queue = 'tamirs2'
 
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on cluster
@@ -61,7 +61,6 @@ JobTemplate =   {'BatchID': None,
                  'data': None,
                  'script': 'my_template_script.sh',  # template sciprt, see generate_script()
                  'queue': PBS_queue,
-                 'jobfile': None,
                  'resources': DefResource,
                  'status': 'init'}
 
@@ -408,25 +407,40 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
     update_job(JobInfo, Release=True)
 
 
-def get_batch_info(BatchID):
-    with sqlite3.connect(QFile) as conn:
-        batch_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
-                                            BatchID={BatchID}
-                                            ORDER BY JobIndex"""))
+def get_batch_info(BatchID, db_connection=None):
+    if db_connection is None:
+        conn = sqlite3.connect(QFile)
+    else:
+        conn = db_connection
+
+    batch_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
+                                        BatchID={BatchID}
+                                        ORDER BY JobIndex"""))
+
+    if db_connection is None:
+        conn.close()
 
     return [unpack_job(job) for job in batch_query]
 
 
-def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False):
+def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
+                 db_connection=None):
     """ HoldFile is ignored but kept for backward compatibility. """
-    with sqlite3.connect(QFile) as conn:
-        job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
-                                          BatchID={BatchID} AND
-                                          JobIndex={JobIndex}"""))
-        if len(job_query) != 1:
-            raise Exception('job is not unique (%d)' % len(job_query))
-        job_query = job_query[0]
+    if db_connection is None:
+        conn = sqlite3.connect(QFile)
+    else:
+        conn = db_connection
+
+    job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
+                                      BatchID={BatchID} AND
+                                      JobIndex={JobIndex}"""))
+    if len(job_query) != 1:
+        raise Exception('job is not unique (%d)' % len(job_query))
+    job_query = job_query[0]
     JobInfo = unpack_job(job_query)
+
+    if db_connection is None:
+        conn.close()
 
     if not SetID:
         return JobInfo
@@ -451,7 +465,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False):
 
     dict_append(JobInfo, 'stdout', '{}/{}/logs/{}'.format(JobDir, BatchID, LogOut))
     dict_append(JobInfo, 'stderr', '{}/{}/logs/{}'.format(JobDir, BatchID, LogErr))
-    update_job(JobInfo, Release=True)
+    update_job(JobInfo, Release=True, db_connection=db_connection)
 
     return JobInfo
 
@@ -464,41 +478,41 @@ def get_job_template(SetID=False):
     return res
 
 
-def update_job(JobInfo, Release=False):
+def update_job(JobInfo, Release=False, db_connection=None):
     """ Release is ignored but kept for backward compatibility. """
 
-    if JobInfo['jobfile'] is None:
-        JobInfo['jobfile'] = JobDir + '{}/meta_{}.pkl'.format(
-                JobInfo['BatchID'], JobInfo['JobIndex'])
+    if db_connection is None:
+        conn = sqlite3.connect(QFile)
+    else:
+        conn = db_connection
 
-    with sqlite3.connect(QFile) as conn:
-        BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
-        md5 = list(conn.execute(f"""SELECT md5, JobID FROM job WHERE
-                                    BatchID={BatchID} AND
-                                    JobIndex={JobIndex}"""))
-        if len(md5) != 1:
-            raise Exception('job is not unique (%d)' % len(md5))
-        # here we're ensuring that JobInfo contains an updated version
-        # of the data, that is consistent with the DB
-        if md5[0][0] != JobInfo['md5']:
-            raise Exception(f'job ({BatchID}, {JobIndex}) was overwritten by another process')
+    BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
+    md5 = list(conn.execute(f"""SELECT md5, JobID FROM job WHERE
+                                BatchID={BatchID} AND
+                                JobIndex={JobIndex}"""))
+    if len(md5) != 1:
+        raise Exception('job is not unique (%d)' % len(md5))
+    # here we're ensuring that JobInfo contains an updated version
+    # of the data, that is consistent with the DB
+    if md5[0][0] != JobInfo['md5']:
+        raise Exception(f'job ({BatchID}, {JobIndex}) was overwritten by another process')
 
-        metadata = pack_job(JobInfo)
-        # we INSERT, then DELETE the old entry, to catch events where two jobs
-        # somehow managed to write (almost) concurrently - the second will fail
-        conn.execute("""INSERT INTO job(JobIndex, BatchID, status,
-                                        priority, metadata, md5)
-                        VALUES (?,?,?,?,?,?)""",
-                     [JobInfo['JobIndex'], JobInfo['BatchID'],
-                      JobInfo['status'], JobInfo['priority'],
-                      metadata, JobInfo['md5']])
+    metadata = pack_job(JobInfo)
+    # we INSERT, then DELETE the old entry, to catch events where two jobs
+    # somehow managed to write (almost) concurrently - the second will fail
+    conn.execute("""INSERT INTO job(JobIndex, BatchID, status,
+                                    priority, metadata, md5)
+                    VALUES (?,?,?,?,?,?)""",
+                 [JobInfo['JobIndex'], JobInfo['BatchID'],
+                  JobInfo['status'], JobInfo['priority'],
+                  metadata, JobInfo['md5']])
 
-        conn.execute("""DELETE FROM job
-                        WHERE JobID=? AND BatchID=? AND JobIndex=?""",
-                     [md5[0][1], JobInfo['BatchID'], JobInfo['JobIndex']])
-        if conn.total_changes < 2:
-            raise Exception('failed to update job' +
-                            '(probably trying to delete an already deleted entry)')
+    conn.execute("""DELETE FROM job
+                    WHERE JobID=? AND BatchID=? AND JobIndex=?""",
+                 [md5[0][1], JobInfo['BatchID'], JobInfo['JobIndex']])
+    if conn.total_changes < 2:
+        raise Exception('failed to update job' +
+                        '(probably trying to delete an already deleted entry)')
 
 #        conn.execute(f"""UPDATE job
 #                         SET metadata=?, md5=?, status=?, priority=? WHERE
@@ -506,6 +520,10 @@ def update_job(JobInfo, Release=False):
 #                         JobIndex={JobIndex}""",
 #                         [metadata, JobInfo['md5'],
 #                          JobInfo['status'], JobInfo['priority']])
+
+    if db_connection is None:
+        conn.commit()
+        conn.close()
 
 
 def pack_job(JobInfo):
@@ -523,9 +541,18 @@ def unpack_job(job_query):
     return JobInfo
 
 
-def update_batch(batch):
+def update_batch(batch, db_connection=None):
+    if db_connection is None:
+        conn = sqlite3.connect(QFile)
+    else:
+        conn = db_connection
+
     for job in batch:
-        update_job(job)
+        update_job(job, db_connection=conn)
+
+    if db_connection is None:
+        conn.commit()
+        conn.close()
 
 
 def add_batch_to_queue(BatchID, Jobs):
@@ -587,11 +614,13 @@ def set_complete(BatchID, JobIndex):
 
 
 def set_job_field(BatchID, JobIndex, Fields={'status': 'init'},
-                  Unless={'status': ['complete', 'collected']}):
+                  Unless={'status': ['complete', 'collected']},
+                  db_connection=None):
     """ called with default args, this sets all jobs in progress
         (unless completed) to `init` state. """
     for j in make_iter(JobIndex):
-        job = get_job_info(BatchID, j, HoldFile=False)
+        job = get_job_info(BatchID, j, HoldFile=False,
+                           db_connection=db_connection)
 
         skip_job = False
         for k in Unless:  # this tests whether the job is protected
@@ -603,16 +632,22 @@ def set_job_field(BatchID, JobIndex, Fields={'status': 'init'},
 
         for k, v in Fields.items():
             job[k] = v
-        update_job(job, Release=True)
+        update_job(job, Release=True, db_connection=db_connection)
 
 
 def set_batch_field(BatchID, Fields={'status': 'init'},
                     Unless={'status': ['complete', 'collected']}):
     """ calls set_job_field on the batch. """
+    conn = sqlite3.connect(QFile)  # single connection for all updates
+
     for b in make_iter(BatchID):
-        BatchInfo = get_batch_info(b)
+        BatchInfo = get_batch_info(b, db_connection=conn)
         for job in BatchInfo:
-            set_job_field(b, job['JobIndex'], Fields, Unless)
+            set_job_field(b, job['JobIndex'], Fields, Unless,
+                          db_connection=conn)
+
+    conn.commit()
+    conn.close()
 
 
 def remove_batch(BatchID):
