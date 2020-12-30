@@ -407,6 +407,22 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
     update_job(JobInfo, Release=True)
 
 
+def get_job_indices(BatchID, db_connection=None):
+    if db_connection is None:
+        conn = sqlite3.connect(QFile)
+    else:
+        conn = db_connection
+
+    batch_query = list(conn.execute(f"""SELECT JobIndex from job WHERE
+                                        BatchID={BatchID}
+                                        ORDER BY JobIndex"""))
+
+    if db_connection is None:
+        conn.close()
+
+    return [job[0] for job in batch_query]
+
+
 def get_batch_info(BatchID, db_connection=None):
     if db_connection is None:
         conn = sqlite3.connect(QFile)
@@ -566,7 +582,7 @@ def add_batch_to_queue(BatchID, Jobs):
     if not all([BatchID == job['BatchID'] for job in Jobs]):
         raise Exception(f'some jobs do not match BatchID={BatchID}')
 
-    if len(get_batch_info(BatchID)) > 0:
+    if len(get_job_indices(BatchID)) > 0:
         raise Exception(f'BatchID={BatchID} already exists')
 
     add_job_to_queue(Jobs)
@@ -588,7 +604,7 @@ def add_job_to_queue(Jobs):
 
             # setting JobIndex automatically
             if BatchID not in batch_index:
-                batch_index[BatchID] = len(get_batch_info(BatchID))
+                batch_index[BatchID] = len(get_job_indices(BatchID))
             if batch_index[BatchID] == 0:
                 # init new batch
                 conn.execute("""INSERT INTO batch
@@ -641,9 +657,9 @@ def set_batch_field(BatchID, Fields={'status': 'init'},
     conn = sqlite3.connect(QFile)  # single connection for all updates
 
     for b in make_iter(BatchID):
-        BatchInfo = get_batch_info(b, db_connection=conn)
-        for job in BatchInfo:
-            set_job_field(b, job['JobIndex'], Fields, Unless,
+        JobList = get_job_indices(b, db_connection=conn)
+        for job in JobList:
+            set_job_field(b, job, Fields, Unless,
                           db_connection=conn)
 
     conn.commit()
@@ -686,7 +702,7 @@ def clean_temp_folders():
     for BatchID in Q.keys():
         for job in Q[BatchID]:
             tempdir = JobDir + '{}/{}'.format(BatchID, job['JobIndex'])
-            if os.path.exists(tempdir):
+            if os.path.isdir(tempdir):
                 shutil.rmtree(tempdir)
                 rmv_list.append(tempdir)
     print('removed {} temp dirs'.format(len(rmv_list)))
@@ -817,7 +833,7 @@ def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1):
         print('log index too small')
         return
     LogFile = LogFile[LogIndex]
-    if not os.path.exists(LogFile):
+    if not os.path.isfile(LogFile):
         print('log is missing.\n{}'.format(LogFile))
         return
 
