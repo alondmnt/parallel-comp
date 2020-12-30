@@ -29,7 +29,7 @@ ServerPath = '/tamir1/'
 ServerHost = 'tau.ac.il'
 QFile = '/tamir1/dalon/RP/Consistency/jobs/job_queue.db'  # '../jobs/job_queue.pkl'
 JobDir = '../jobs/'
-PBS_queue = 'tamirs2'
+PBS_queue = 'tamir-nano4'
 
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on cluster
@@ -367,8 +367,9 @@ def parse_filter(Filter):
 
 def qdel_batch(BatchID):
     """ this will run the PBS qdel command on the entire batch of jobs. """
-    for job in get_batch_info(BatchID):
-        qdel_job(JobInfo=job)
+    for batch in make_iter(BatchID):
+        for job in get_batch_info(batch):
+            qdel_job(JobInfo=job)
 
 
 def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
