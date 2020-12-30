@@ -39,17 +39,20 @@ def populate_db(QFile=QFile):
     Q = get_queue(QFile=QFile)
 
     for batch_id, batch in Q.items():
-        conn.execute("""INSERT INTO batch
-                        VALUES (?,?,?,?)""",
-                     [batch_id, '/'.join(batch[0]['name']),
-                      batch[0]['organism'], batch[0]['data_type']])
         for job in batch:
+            if 'organism' in job:
+                job['name'] = [job['organism']] + job['name']
             metadata = pack_job(job)
             conn.execute("""INSERT INTO job(JobIndex, BatchID, status,
                                             priority, metadata, md5)
                             VALUES (?,?,?,?,?,?)""",
                          [job['JobIndex'], batch_id, job['status'],
                           job['priority'], metadata, job['md5']])
+
+        conn.execute("""INSERT INTO batch
+                        VALUES (?,?,?,?)""",
+                     [batch_id, '/'.join(batch[0]['name']),
+                      batch[0]['organism'], batch[0]['data_type']])
 
     conn.commit()
     conn.close()
