@@ -40,13 +40,12 @@ def populate_db(QFile=QFile):
 
     for batch_id, batch in Q.items():
         for job in batch:
-            if 'organism' in job:
-                job['name'] = [job['organism']] + job['name']
+            upgrade_job(job)            
             metadata = pack_job(job)
-            conn.execute("""INSERT INTO job(JobIndex, BatchID, status,
+            conn.execute("""INSERT INTO job(JobIndex, BatchID, state,
                                             priority, metadata, md5)
                             VALUES (?,?,?,?,?,?)""",
-                         [job['JobIndex'], batch_id, job['status'],
+                         [job['JobIndex'], batch_id, job['state'],
                           job['priority'], metadata, job['md5']])
 
         conn.execute("""INSERT INTO batch
@@ -62,6 +61,14 @@ def populate_db(QFile=QFile):
     assert all([json.dumps(reconstructed_Q[b], default=set_default) == 
                 json.dumps(Q[b], default=set_default)
                 for b in Q])
+
+
+def upgrade_job(JobInfo):
+    if 'organism' in JobInfo:
+        JobInfo['name'] = [JobInfo['organism']] + JobInfo['name']
+    if 'status' in JobInfo:
+        JobInfo['state'] = JobInfo['status']
+        del JobInfo['status']
 
 
 def get_queue(QFile):

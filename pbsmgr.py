@@ -62,7 +62,7 @@ JobTemplate =   {'BatchID': None,
                  'script': 'my_template_script.sh',  # template sciprt, see generate_script()
                  'queue': PBS_queue,
                  'resources': DefResource,
-                 'status': 'init'}
+                 'state': 'init'}
 
 
 def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False, **Filter):
@@ -104,7 +104,7 @@ def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False, **Fil
        is given only when priorities are above 100.
     """
     job_priority = {j: max([0] + [p['priority'] for p in Q[j]
-                                  if p['status'] not in
+                                  if p['state'] not in
                                   {'complete', 'collected'}])
                     for j in list(Q)}
     max_priority = max(job_priority.values())
@@ -159,12 +159,12 @@ def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
     for batch in make_iter(BatchID):
         BatchInfo = get_batch_info(batch)
         job_priority = max([0] + [j['priority'] for j in BatchInfo
-                                  if j['status'] not in
+                                  if j['state'] not in
                                   {'complete', 'collected'}])
         for job in BatchInfo:
             if job['priority'] < job_priority:
                 continue
-            if job['status'] == 'init':
+            if job['state'] == 'init':
                 submit_one_job(batch, job['JobIndex'], OutFile=OutFile)
                 SubCount += 1
                 if SubCount >= MaxJobs:
@@ -186,7 +186,7 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
     for j in make_iter(JobIndex):
         job = get_job_info(BatchID, j, HoldFile=True)
         print('submiting:\t{}'.format(job['script']))
-        if job['status'] != 'init':
+        if job['state'] != 'init':
             warnings.warn('already submitted')
         if 'resources' in job:
             this_res = job['resources']
@@ -202,7 +202,7 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
             OutFile.write(job['script'] + '\n')
 
         if not Spawn:
-            job['status'] = 'submit'
+            job['state'] = 'submit'
             job['submit_id'] = submit_id
             job['subtime'] = get_id()
             if 'PBS_ID' in job:
@@ -210,9 +210,9 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
             if 'qstat' in job:
                 del job['qstat']
         else:
-            if job['status'] != 'spawn':
+            if job['state'] != 'spawn':
                 # remove previous information
-                job['status'] = 'spawn'
+                job['state'] = 'spawn'
                 job['submit_id'] = []
                 job['subtime'] = []
                 job['PBS_ID'] = []
@@ -300,7 +300,7 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
             del Q[BatchID]
             continue
 
-        status = {}
+        state = {}
         for pinfo in Q[BatchID]:
             cnt['total'] += 1
             job_index = pinfo['JobIndex']
@@ -313,19 +313,19 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
                         if powQ[pid][1] == 'R':
                             job_index = str(job_index) + '*'
                             cnt['online'] += 1
-                    elif pinfo['status'] in {'submit', 'spawn', 'run'} and \
+                    elif pinfo['state'] in {'submit', 'spawn', 'run'} and \
                             'subtime' in pinfo:
                         if pinfo['subtime'] < curr_time:
                             dict_append(missing, BatchID, job_index)
-            cnt[pinfo['status']] += 1
-            dict_append(status, pinfo['status'], job_index)
+            cnt[pinfo['state']] += 1
+            dict_append(state, pinfo['state'], job_index)
 
         if Verbose:
             if Display is not None:
-                status = {s: p for s, p in status.items() if s in Display}
-            if len(status) > 0:
+                state = {s: p for s, p in state.items() if s in Display}
+            if len(state) > 0:
                 print('\n{}: {}'.format(BatchID, '/'.join(pinfo['name'])))
-                print(status)
+                print(state)
 
     if ResetMissing:
         for BatchID in missing:
@@ -333,7 +333,7 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
                 jobDir = JobDir + '{}/{}'.format(BatchID, JobIndex)
                 if os.path.isdir(jobDir):
                     shutil.rmtree(jobDir)
-                set_job_field(BatchID, JobIndex, {'status': 'init'})
+                set_job_field(BatchID, JobIndex, {'state': 'init'})
 
     if Verbose:
         print('\nmissing jobs: {}'.format(missing))
@@ -409,7 +409,7 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
         if k in JobInfo and not len(JobInfo[k]):  # all deleted
             del JobInfo[k]
 #            if k == 'submit_id':
-            JobInfo['status'] = 'init'
+            JobInfo['state'] = 'init'
 
     update_job(JobInfo, Release=True)
 
@@ -468,7 +468,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
     if not SetID:
         return JobInfo
 
-    if JobInfo['status'] == 'spawn':
+    if JobInfo['state'] == 'spawn':
         JobInfo['PBS_ID'].append(PBS_ID)
         JobInfo['hostname'].append(hostname)
         # while the following IDs are set asynchronously, we can test if
@@ -484,7 +484,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
     else:
         JobInfo['PBS_ID'] = PBS_ID
         JobInfo['hostname'] = hostname
-        JobInfo['status'] = 'run'
+        JobInfo['state'] = 'run'
 
     dict_append(JobInfo, 'stdout', '{}/{}/logs/{}'.format(JobDir, BatchID, LogOut))
     dict_append(JobInfo, 'stderr', '{}/{}/logs/{}'.format(JobDir, BatchID, LogErr))
@@ -528,11 +528,11 @@ def update_job(JobInfo, Release=False, db_connection=None):
     metadata = pack_job(JobInfo)
     # we INSERT, then DELETE the old entry, to catch events where two jobs
     # somehow managed to write (almost) concurrently - the second will fail
-    conn.execute("""INSERT INTO job(JobIndex, BatchID, status,
+    conn.execute("""INSERT INTO job(JobIndex, BatchID, state,
                                     priority, metadata, md5)
                     VALUES (?,?,?,?,?,?)""",
                  [JobInfo['JobIndex'], JobInfo['BatchID'],
-                  JobInfo['status'], JobInfo['priority'],
+                  JobInfo['state'], JobInfo['priority'],
                   metadata, JobInfo['md5']])
 
     conn.execute("""DELETE FROM job
@@ -543,11 +543,11 @@ def update_job(JobInfo, Release=False, db_connection=None):
                         '(probably trying to delete an already deleted entry)')
 
 #        conn.execute(f"""UPDATE job
-#                         SET metadata=?, md5=?, status=?, priority=? WHERE
+#                         SET metadata=?, md5=?, state=?, priority=? WHERE
 #                         BatchID={BatchID} AND
 #                         JobIndex={JobIndex}""",
 #                         [metadata, JobInfo['md5'],
-#                          JobInfo['status'], JobInfo['priority']])
+#                          JobInfo['state'], JobInfo['priority']])
 
     if db_connection is None:
         conn.commit()
@@ -627,22 +627,22 @@ def add_job_to_queue(Jobs):
             job['JobIndex'] = batch_index[BatchID]
             batch_index[BatchID] += 1
             metadata = pack_job(job)
-            conn.execute("""INSERT INTO job(JobIndex, BatchID, status,
+            conn.execute("""INSERT INTO job(JobIndex, BatchID, state,
                                             priority, metadata, md5)
                             VALUES (?,?,?,?,?,?)""",
-                         [job['JobIndex'], BatchID, job['status'],
+                         [job['JobIndex'], BatchID, job['state'],
                           job['priority'], metadata, job['md5']])
 
 
 def set_complete(BatchID, JobIndex):
     JobInfo = get_job_info(BatchID, JobIndex, HoldFile=True)
     JobInfo['qstat'] = get_qstat()
-    JobInfo['status'] = 'complete'
+    JobInfo['state'] = 'complete'
     update_job(JobInfo, Release=True)
 
 
-def set_job_field(BatchID, JobIndex, Fields={'status': 'init'},
-                  Unless={'status': ['complete', 'collected']},
+def set_job_field(BatchID, JobIndex, Fields={'state': 'init'},
+                  Unless={'state': ['complete', 'collected']},
                   db_connection=None):
     """ called with default args, this sets all jobs in progress
         (unless completed) to `init` state. """
@@ -663,8 +663,8 @@ def set_job_field(BatchID, JobIndex, Fields={'status': 'init'},
         update_job(job, Release=True, db_connection=db_connection)
 
 
-def set_batch_field(BatchID, Fields={'status': 'init'},
-                    Unless={'status': ['complete', 'collected']}):
+def set_batch_field(BatchID, Fields={'state': 'init'},
+                    Unless={'state': ['complete', 'collected']}):
     """ calls set_job_field on the batch. """
     conn = sqlite3.connect(QFile)  # single connection for all updates
 
@@ -701,7 +701,7 @@ def remove_batch_by_state(state):
         states. """
     Q = get_queue(Verbose=False)
     for BatchID in Q.keys():
-        if all([True if p['status'] in state else False
+        if all([True if p['state'] in state else False
                 for p in Q[BatchID]]):
             remove_batch(BatchID)
 
@@ -737,7 +737,7 @@ def boost_batch_priority(BatchID, Booster=100):
 
 def spawn_submit(JobInfo, N):
     """ run the selected job multiple times in parallel. job needs to handle
-        'spawn' status for correct logic: i.e., only last job to complete
+        'spawn' state for correct logic: i.e., only last job to complete
         updates additional fields in JobInfo. """
     set_job_field(JobInfo['BatchID'], JobInfo['JobIndex'],
                    Fields={'spawn_count': N+1,
@@ -755,12 +755,12 @@ def spawn_complete(JobInfo):
         current job to JobInfo, unless all spawns completed. """
     my_id = JobInfo['spawn_id'][-1]
     JobInfo = get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], HoldFile=True)
-    if JobInfo['status'] != 'spawn':
-        # must not leave function with an ambiguous status in JobInfo
+    if JobInfo['state'] != 'spawn':
+        # must not leave function with an ambiguous state in JobInfo
         # e.g., if job has been re-submitted by some one/job
         # (unknown logic follows)
-        raise Exception('unknown status [{}] encountered for spawned ' +
-                        'job ({}, {}, {})'.format(JobInfo['status'],
+        raise Exception('unknown state [{}] encountered for spawned ' +
+                        'job ({}, {}, {})'.format(JobInfo['state'],
                                                   JobInfo['BatchID'],
                                                   JobInfo['JobIndex']))
 
@@ -794,13 +794,13 @@ def spawn_complete(JobInfo):
     elif len(is_missing) == 0:  # (2)
         # all spawns submitted [from (1)], and
         # all spawns complete [from (2)], so
-        # reinstate job id and submit status (so it is recognized by get_queue())
-        JobInfo['status'] = 'submit'
+        # reinstate job id and submit state (so it is recognized by get_queue())
+        JobInfo['state'] = 'submit'
         JobInfo['hostname'] = hostname
         JobInfo['PBS_ID'] = PBS_ID
         update_job(JobInfo, Release=True)
         # set but not update yet (delay post-completion submissions)
-        JobInfo['status'] = 'complete'
+        JobInfo['state'] = 'complete'
 
     elif len(JobInfo['PBS_ID']) == 0:  # (3)
         # some missing spawns exist [from (2)], and
@@ -825,7 +825,7 @@ def spawn_complete(JobInfo):
 def spawn_resubmit(BatchID, JobIndex):
     """ submit missing spawns. """
     JobInfo = get_job_info(BatchID, JobIndex)
-    if JobInfo['status'] != 'spawn':
+    if JobInfo['state'] != 'spawn':
         return
 
     for i in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
@@ -839,7 +839,7 @@ def spawn_fix_ghosts(BatchID, JobIndex):
         `PBS_ID` and `spawn_id` lists, and resubmit.
         this is the spawn-eqeuivalent of resetting missing jobs. """
     JobInfo = get_job_info(BatchID, JobIndex, HoldFile=True)
-    if JobInfo['status'] != 'spawn':
+    if JobInfo['state'] != 'spawn':
         return
 
     print('{} ghosts in PBS_ID'.format(len(JobInfo['PBS_ID'])))
@@ -945,10 +945,10 @@ def init_db(conn):
 
     # keeping just the essentials as separate columns, rest in the metadata JSON
     conn.execute("""CREATE TABLE job(
-                    JobID       INTEGER     PRIMARY KEY AUTOINCREMENT,
-                    JobIndex    INT     NOT NULL,
+                    idx         INTEGER     PRIMARY KEY AUTOINCREMENT,
                     BatchID     INT     NOT NULL,
-                    status      TEXT    NOT NULL,
+                    JobIndex    INT     NOT NULL,
+                    state       TEXT    NOT NULL,
                     priority    INT     NOT NULL,
                     metadata    TEXT    NOT NULL,
                     md5         TEXT    NOT NULL
