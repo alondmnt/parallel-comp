@@ -14,7 +14,6 @@ import time
 import pickle
 pickle.HIGHEST_PROTOCOL = 2  # for compatibility with python2
 from datetime import datetime
-import json
 import hashlib
 import shutil
 import sqlite3
@@ -201,6 +200,10 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
         else:
             OutFile.write(job['script'] + '\n')
 
+        if Spawn:
+            job['state'] = 'spawn'
+            
+
         if not Spawn:
             job['state'] = 'submit'
             job['submit_id'] = submit_id
@@ -348,7 +351,7 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
 
 
 def get_sql_queue(QFile, Filter={}):
-    with sqlite3.connect(QFile) as conn:
+    with open_db() as conn:
         df = pd.read_sql_query('SELECT * FROM ' +
                                """(SELECT j.*,
                                           b.name,
@@ -415,33 +418,21 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
 
 
 def get_job_indices(BatchID, db_connection=None):
-    if db_connection is None:
-        conn = sqlite3.connect(QFile)
-    else:
-        conn = db_connection
-
+    conn = open_db(db_connection)
     batch_query = list(conn.execute(f"""SELECT JobIndex from job WHERE
                                         BatchID={BatchID}
                                         ORDER BY JobIndex"""))
-
-    if db_connection is None:
-        conn.close()
+    close_db(conn, db_connection)
 
     return [job[0] for job in batch_query]
 
 
 def get_batch_info(BatchID, db_connection=None):
-    if db_connection is None:
-        conn = sqlite3.connect(QFile)
-    else:
-        conn = db_connection
-
+    conn = open_db(db_connection)
     batch_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
                                         BatchID={BatchID}
                                         ORDER BY JobIndex"""))
-
-    if db_connection is None:
-        conn.close()
+    close_db(conn, db_connection)
 
     return [unpack_job(job) for job in batch_query]
 
@@ -449,11 +440,7 @@ def get_batch_info(BatchID, db_connection=None):
 def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
                  db_connection=None):
     """ HoldFile is ignored but kept for backward compatibility. """
-    if db_connection is None:
-        conn = sqlite3.connect(QFile)
-    else:
-        conn = db_connection
-
+    conn = open_db(db_connection)
     job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
                                       BatchID={BatchID} AND
                                       JobIndex={JobIndex}"""))
@@ -462,8 +449,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
     job_query = job_query[0]
     JobInfo = unpack_job(job_query)
 
-    if db_connection is None:
-        conn.close()
+    close_db(conn, db_connection)
 
     if not SetID:
         return JobInfo
@@ -509,13 +495,9 @@ def get_id():
 def update_job(JobInfo, Release=False, db_connection=None):
     """ Release is ignored but kept for backward compatibility. """
 
-    if db_connection is None:
-        conn = sqlite3.connect(QFile)
-    else:
-        conn = db_connection
-
+    conn = open_db(db_connection)
     BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
-    md5 = list(conn.execute(f"""SELECT md5, JobID FROM job WHERE
+    md5 = list(conn.execute(f"""SELECT md5, idx FROM job WHERE
                                 BatchID={BatchID} AND
                                 JobIndex={JobIndex}"""))
     if len(md5) != 1:
@@ -536,7 +518,7 @@ def update_job(JobInfo, Release=False, db_connection=None):
                   metadata, JobInfo['md5']])
 
     conn.execute("""DELETE FROM job
-                    WHERE JobID=? AND BatchID=? AND JobIndex=?""",
+                    WHERE idx=? AND BatchID=? AND JobIndex=?""",
                  [md5[0][1], JobInfo['BatchID'], JobInfo['JobIndex']])
     if conn.total_changes < 2:
         raise Exception('failed to update job' +
@@ -549,9 +531,7 @@ def update_job(JobInfo, Release=False, db_connection=None):
 #                         [metadata, JobInfo['md5'],
 #                          JobInfo['state'], JobInfo['priority']])
 
-    if db_connection is None:
-        conn.commit()
-        conn.close()
+    close_db(conn, db_connection)
 
 
 def pack_job(JobInfo):
@@ -570,17 +550,12 @@ def unpack_job(job_query):
 
 
 def update_batch(batch, db_connection=None):
-    if db_connection is None:
-        conn = sqlite3.connect(QFile)
-    else:
-        conn = db_connection
+    conn = open_db(db_connection)
 
     for job in batch:
         update_job(job, db_connection=conn)
 
-    if db_connection is None:
-        conn.commit()
-        conn.close()
+    close_db(conn, db_connection)
 
 
 def add_batch_to_queue(BatchID, Jobs):
@@ -610,7 +585,7 @@ def add_job_to_queue(Jobs):
         init_db(QFile)
 
     batch_index = {}
-    with sqlite3.connect(QFile) as conn:
+    with open_db() as conn:
         for job in make_iter(Jobs):
             BatchID = job['BatchID']
 
@@ -666,7 +641,7 @@ def set_job_field(BatchID, JobIndex, Fields={'state': 'init'},
 def set_batch_field(BatchID, Fields={'state': 'init'},
                     Unless={'state': ['complete', 'collected']}):
     """ calls set_job_field on the batch. """
-    conn = sqlite3.connect(QFile)  # single connection for all updates
+    conn = open_db()  # single connection for all updates
 
     for b in make_iter(BatchID):
         JobList = get_job_indices(b, db_connection=conn)
@@ -674,12 +649,11 @@ def set_batch_field(BatchID, Fields={'state': 'init'},
             set_job_field(b, job, Fields, Unless,
                           db_connection=conn)
 
-    conn.commit()
-    conn.close()
+    close_db(conn)
 
 
 def remove_batch(BatchID):
-    with sqlite3.connect(QFile) as conn:
+    with open_db() as conn:
         for batch in make_iter(BatchID):
             WorkDir = JobDir + str(batch)
             if os.path.isdir(WorkDir):
@@ -933,7 +907,10 @@ def generate_data(JobInfo, Data):
 
 
 def init_db(conn):
-    """ creating tables for a given sqlite3 connection. """
+    """ creating tables for a given sqlite3 connection.
+        job hierarchy: batch > job > spawn.
+        a batch contains multiple jobs/steps.
+        a job may go for extra parallelization by launching spawns. """
 
     # keeping the main searchable fields here
     conn.execute("""CREATE TABLE batch(
@@ -953,3 +930,34 @@ def init_db(conn):
                     metadata    TEXT    NOT NULL,
                     md5         TEXT    NOT NULL
                     );""")
+
+    # no metadata for spawn jobs (what is needed is a copy of the metadata
+    # in the job table + a unique SpawnID)
+    conn.execute("""CREATE TABLE spawn(
+                    idx         INTEGER     PRIMARY KEY AUTOINCREMENT
+                    BatchID     INT     NOT NULL,
+                    JobIndex    INT     NOT NULL,
+                    SpawnID     INT     NOT NULL,
+                    PBS_ID      INT     NOT NULL,
+                    stdout      TEXT    NOT NULL,
+                    stderr      TEXT    NOT NULL,
+                    state       INT     NOT NULL
+                    );""")
+
+
+def open_db(db_connection=None):
+    """ returns a connection to SQL DB whether you provide an
+        existing one or not. """
+    if db_connection is None:
+        return sqlite3.connect(QFile)
+    else:
+        return db_connection
+
+
+def close_db(conn, db_connection=None):
+    """ either close connection to SQL DB (if opened) or do nothing
+        (if connection previously provided). """
+    if db_connection is not None:
+        return
+    conn.commit()
+    conn.close()
