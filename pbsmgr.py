@@ -732,7 +732,7 @@ def spawn_submit(JobInfo, N):
                    Fields={'spawn_count': N+1,
                            'stdout': [], 'stderr': []}, Unless={})
     for _ in range(N):
-        time.sleep(10)  # avoid collisions
+        time.sleep(1)  # avoid collisions
         submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
 
     # update current job with spawn IDs
@@ -753,42 +753,60 @@ def spawn_complete(JobInfo):
                                                   JobInfo['BatchID'],
                                                   JobInfo['JobIndex']))
 
+    JobInfo['spawn_complete'].add(my_id)
     try:
         JobInfo['PBS_ID'].remove(PBS_ID)
         JobInfo['hostname'].remove(hostname)
     except:
-        pass
-    JobInfo['spawn_complete'].add(my_id)
-    update_job(JobInfo, Release=True)
+        # if my PowerID is not in JobInfo, this possibly means
+        # that two running spawns collided and share the same spawn_id
+        print('resubmitting a single spawn')
+        update_job(JobInfo, Release=True)
+        submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
+        JobInfo = get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], HoldFile=True)
 
-    if len(JobInfo['spawn_id']) != JobInfo['spawn_count']:
-        # unexplained frequent problem, tried to work this out by delaying sub
-        # cannot resubmit because jobs may still be queued at this point
+
+    is_missing = [s for s in JobInfo['spawn_id']
+                  if s not in JobInfo['spawn_complete']]
+
+    if len(JobInfo['spawn_id']) != JobInfo['spawn_count']:  # (1)
+        # some spawns were not submitted or have yet to start running
+        # (nothing wrong, or the following:)
         print('if queue is *empty*, consider using',
-              'pbsmgr.spawn_resubmit({BatchID}, {JobIndex})'.format(**JobInfo))
-    elif len(JobInfo['PBS_ID']) == 0:
-        # no more running or *queued* spawns
-        is_missing = [s for s in JobInfo['spawn_id']
-                      if s not in JobInfo['spawn_complete']]
-        if len(is_missing):
-            # submit
-            print('missing spawns')
-            for m in is_missing:
-                if m in JobInfo['spawn_resub']:
-                    continue  # only once
-                JobInfo['spawn_id'].remove(m)  # (by value)
-                JobInfo['spawn_resub'].add(m)
-            update_job(JobInfo)
-            spawn_resubmit(JobInfo['BatchID'], JobInfo['JobIndex'])
+              'power.spawn_resubmit({BatchID}, {JobIndex})'.format(**JobInfo))
+        # shouldn't happen but sometimes does, after all spawns submitted,
+        # probably because of job collision
+        # tried to work this out by file locks and delaying submission
+        # NOTE: cannot resubmit at this point because jobs may still be queued
+        update_job(JobInfo, Release=True)
 
-        else:
-            # reinstate job id and submit status (so it is recognized by get_queue())
-            JobInfo['status'] = 'run'  # 'submit'
-            JobInfo['hostname'] = hostname
-            JobInfo['PBS_ID'] = PBS_ID
-            update_job(JobInfo)
-            # set but not update yet (delay post-completion submissions)
-            JobInfo['status'] = 'complete'
+    elif len(is_missing) == 0:  # (2)
+        # all spawns submitted [from (1)], and
+        # all spawns complete [from (2)], so
+        # reinstate job id and submit status (so it is recognized by get_queue())
+        JobInfo['status'] = 'submit'
+        JobInfo['hostname'] = hostname
+        JobInfo['PBS_ID'] = PBS_ID
+        update_job(JobInfo, Release=True)
+        # set but not update yet (delay post-completion submissions)
+        JobInfo['status'] = 'complete'
+
+    elif len(JobInfo['PowerID']) == 0:  # (3)
+        # some missing spawns exist [from (2)], and
+        # no other spawns running [from (3)], and
+        # no other spawns queued [from (1)], so
+        # re-submit
+        print('missing spawns')
+        for m in is_missing:
+            if m in JobInfo['spawn_resub']:
+                continue  # only once
+            JobInfo['spawn_id'].remove(m)  # (by value)
+            JobInfo['spawn_resub'].add(m)
+        update_job(JobInfo, Release=True)
+        spawn_resubmit(JobInfo['BatchID'], JobInfo['JobIndex'])
+
+    else:
+        update_job(JobInfo, Release=True)
 
     return JobInfo
 
@@ -796,10 +814,33 @@ def spawn_complete(JobInfo):
 def spawn_resubmit(BatchID, JobIndex):
     """ submit missing spawns. """
     JobInfo = get_job_info(BatchID, JobIndex)
-    if JobInfo['status'] == 'spawn':
-        for _ in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
-            time.sleep(10)
-            submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
+    if JobInfo['status'] != 'spawn':
+        return
+
+    for i in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
+        # time.sleep(1)
+        submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
+
+
+def spawn_fix_ghosts(BatchID, JobIndex):
+    """ run this after spawn_resubmit fails when NO SPAWNS ARE RUNNING to
+        remove spawns still existing (that failed) from the 
+        `PBS_ID` and `spawn_id` lists, and resubmit.
+        this is the spawn-eqeuivalent of resetting missing jobs. """
+    JobInfo = get_job_info(BatchID, JobIndex, HoldFile=True)
+    if JobInfo['status'] != 'spawn':
+        return
+
+    print('{} ghosts in PowerID'.format(len(JobInfo['PowerID'])))
+    JobInfo['PBS_ID'] = []
+    JobInfo['hostname'] = []
+
+    print('{} ghosts in spawn_id'.format(len(JobInfo['spawn_id']) -
+                                         len(JobInfo['spawn_complete'])))
+    JobInfo['spawn_id'] = list(JobInfo['spawn_complete'])
+
+    update_job(JobInfo, Release=True)
+    spawn_resubmit(BatchID, JobIndex)
 
 
 def isiterable(p_object):
