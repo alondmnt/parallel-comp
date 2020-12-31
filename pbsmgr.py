@@ -197,13 +197,14 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
         if 'queue' in job:
             this_sub[2] = job['queue']
         if OutFile is None:
-            job['submit_id'] = subprocess.check_output(this_sub + [job['script']]).decode('UTF-8').split('.')[0]
+            submit_id = subprocess.check_output(this_sub + [job['script']]).decode('UTF-8').split('.')[0]
         else:
             OutFile.write(job['script'] + '\n')
 
         if not Spawn:
             job['status'] = 'submit'
-            job['subtime'] = time.time()
+            job['submit_id'] = submit_id
+            job['subtime'] = get_id()
             if 'PBS_ID' in job:
                 del job['PBS_ID']
             if 'qstat' in job:
@@ -212,11 +213,16 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
             if job['status'] != 'spawn':
                 # remove previous information
                 job['status'] = 'spawn'
+                job['submit_id'] = []
+                job['subtime'] = []
                 job['PBS_ID'] = []
                 job['hostname'] = []
                 job['spawn_id'] = []
                 job['spawn_complete'] = set()
                 job['spawn_resub'] = set()
+
+            job['submit_id'].append(submit_id)
+            job['subtime'].append(get_id())
 
         update_job(job, Release=True)
 
@@ -491,8 +497,13 @@ def get_job_template(SetID=False):
     res = deepcopy(JobTemplate)
     if SetID:
         time.sleep(1)  # precaution against non-unique IDs
-        res['BatchID'] = int(datetime.now().strftime('%Y%m%d%H%M%S'))
+        res['BatchID'] = get_id()
     return res
+
+
+def get_id():
+    """ readable timestamp in seconds. """
+    return int(datetime.now().strftime('%Y%m%d%H%M%S'))
 
 
 def update_job(JobInfo, Release=False, db_connection=None):
@@ -758,7 +769,7 @@ def spawn_complete(JobInfo):
         JobInfo['PBS_ID'].remove(PBS_ID)
         JobInfo['hostname'].remove(hostname)
     except:
-        # if my PowerID is not in JobInfo, this possibly means
+        # if my PBS_ID is not in JobInfo, this possibly means
         # that two running spawns collided and share the same spawn_id
         print('resubmitting a single spawn')
         update_job(JobInfo, Release=True)
@@ -791,7 +802,7 @@ def spawn_complete(JobInfo):
         # set but not update yet (delay post-completion submissions)
         JobInfo['status'] = 'complete'
 
-    elif len(JobInfo['PowerID']) == 0:  # (3)
+    elif len(JobInfo['PBS_ID']) == 0:  # (3)
         # some missing spawns exist [from (2)], and
         # no other spawns running [from (3)], and
         # no other spawns queued [from (1)], so
@@ -831,7 +842,7 @@ def spawn_fix_ghosts(BatchID, JobIndex):
     if JobInfo['status'] != 'spawn':
         return
 
-    print('{} ghosts in PowerID'.format(len(JobInfo['PowerID'])))
+    print('{} ghosts in PBS_ID'.format(len(JobInfo['PBS_ID'])))
     JobInfo['PBS_ID'] = []
     JobInfo['hostname'] = []
 
