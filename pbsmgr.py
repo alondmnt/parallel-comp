@@ -172,9 +172,7 @@ def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
 
 
 def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
-    global JobDir
-    global PBS_queue
-
+    """ accepts either an integer or an iterable of integers as JobIndex. """
     ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
     OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
     if not os.path.isdir(ErrDir):
@@ -200,10 +198,6 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
         else:
             OutFile.write(job['script'] + '\n')
 
-        if Spawn:
-            job['state'] = 'spawn'
-            
-
         if not Spawn:
             job['state'] = 'submit'
             job['submit_id'] = submit_id
@@ -212,22 +206,16 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
                 del job['PBS_ID']
             if 'qstat' in job:
                 del job['qstat']
-        else:
-            if job['state'] != 'spawn':
-                # remove previous information
-                job['state'] = 'spawn'
-                job['submit_id'] = []
-                job['subtime'] = []
-                job['PBS_ID'] = []
-                job['hostname'] = []
-                job['spawn_id'] = []
-                job['spawn_complete'] = set()
-                job['spawn_resub'] = set()
 
-            job['submit_id'].append(submit_id)
-            job['subtime'].append(get_id())
+            update_job(job, Release=True)
+            return
 
-        update_job(job, Release=True)
+        # Spawn==True
+        if job['state'] != 'spawn':
+            job['state'] = 'spawn'
+            update_job(job, Release=True)
+
+        spawn_add_to_db(BatchID, JobIndex, submit_id)
 
 
 def parse_qstat(text):
@@ -451,26 +439,20 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
 
     close_db(conn, db_connection)
 
+    if JobInfo['state'] == 'spawn':
+        # no update made to job in DB
+        JobInfo.update(spawn_get_info(BatchID, JobIndex, PBS_ID=PBS_ID,
+                                      db_connection=db_connection))
+        return JobInfo
+
+    # not spawn
     if not SetID:
         return JobInfo
 
-    if JobInfo['state'] == 'spawn':
-        JobInfo['PBS_ID'].append(PBS_ID)
-        JobInfo['hostname'].append(hostname)
-        # while the following IDs are set asynchronously, we can test if
-        # were set correctly by comparing spawn_count to length of spawn_id
-        next_id = 0
-        while next_id in JobInfo['spawn_id']:  # find missing
-            next_id += 1
-        if next_id >= JobInfo['spawn_count']:
-                raise Exception('bad spawn_id {} >= {}, too many submitted'.format(
-                                next_id, JobInfo['spawn_count']))
-        JobInfo['spawn_id'].append(next_id)
-        print('spawn_id', next_id)
-    else:
-        JobInfo['PBS_ID'] = PBS_ID
-        JobInfo['hostname'] = hostname
-        JobInfo['state'] = 'run'
+    # SetID==True
+    JobInfo['PBS_ID'] = PBS_ID
+    JobInfo['hostname'] = hostname
+    JobInfo['state'] = 'run'
 
     dict_append(JobInfo, 'stdout', '{}/{}/logs/{}'.format(JobDir, BatchID, LogOut))
     dict_append(JobInfo, 'stderr', '{}/{}/logs/{}'.format(JobDir, BatchID, LogErr))
@@ -712,86 +694,104 @@ def boost_batch_priority(BatchID, Booster=100):
 def spawn_submit(JobInfo, N):
     """ run the selected job multiple times in parallel. job needs to handle
         'spawn' state for correct logic: i.e., only last job to complete
-        updates additional fields in JobInfo. """
-    set_job_field(JobInfo['BatchID'], JobInfo['JobIndex'],
-                   Fields={'spawn_count': N+1,
-                           'stdout': [], 'stderr': []}, Unless={})
+        updates additional fields in JobInfo and sets it to 'complete'. """
+
+    spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
+
     for _ in range(N):
-        time.sleep(1)  # avoid collisions
         submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
 
-    # update current job with spawn IDs
+    # adding self
+    spawn_add_to_db(JobInfo['BatchID'], JobInfo['JobIndex'], PBS_ID)
+
+    # update current job with spawn ID
     return get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], SetID=True)
 
 
-def spawn_complete(JobInfo):
+def spawn_add_to_db(BatchID, JobIndex, PBS_ID, db_connection=None):
+    conn = open_db(db_connection)
+    stdout = '{}/{}/logs/{}.OU'.format(JobDir, BatchID, PBS_ID)
+    stderr = '{}/{}/logs/{}.ER'.format(JobDir, BatchID, PBS_ID)
+    # auto-numbering of spawns
+    # TODO: if we ever delete some row, auto-numbering will fail and may
+    #       generate already existing IDs
+    SpawnID = len(list(
+            conn.execute(f"""SELECT SpawnID FROM spawn
+                             WHERE BatchID={BatchID} AND
+                                   JobIndex={JobIndex}""")))
+    conn.execute("""INSERT INTO spawn(BatchID, JobIndex, SpawnID, PBS_ID,
+                                      spawn_state, stdout, stderr)
+                    VALUES (?,?,?,?,?,?,?)""",
+                 [BatchID, JobIndex, SpawnID, PBS_ID,
+                  'submit', stdout, stderr])
+    close_db(conn, db_connection)
+
+
+def spawn_del_from_db(BatchID, JobIndex, db_connection=None):
+    conn = open_db(db_connection)
+    conn.execute("""DELETE FROM spawn WHERE
+                    BatchID=? AND JobIndex=?""",
+                    [BatchID, JobIndex])
+    close_db(conn, db_connection)
+
+
+def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None):
+    fields = ['SpawnID', 'PBS_ID', 'spawn_state', 'stdout', 'stderr']
+    condition = f'BatchID={BatchID} AND JobIndex={JobIndex}'
+    max_query_size = None
+    if (PBS_ID is not None) and (len(PBS_ID) > 0):
+        condition += f' AND PBS_ID="{PBS_ID}"'
+        max_query_size = 1
+
+    conn = open_db(db_connection)
+    spawn_query = pd.read_sql(f"""SELECT {', '.join(fields)}
+                                  FROM spawn
+                                  WHERE {condition}""", conn)
+    close_db(conn, db_connection)
+
+    if len(spawn_query) == 0:
+        raise Exception(f'no corresponding spawn job for {BatchID, JobIndex, PBS_ID}')
+    elif (max_query_size is not None) and (len(spawn_query) > max_query_size):
+        raise Exception(f'too many spawns for PBS_ID={PBS_ID}')
+
+    return spawn_query.to_dict(orient='list')  # return a dict
+
+
+def spawn_complete(JobInfo, db_connection=None):
     """ signal that one spawn has ended successfully. only update done by
         current job to JobInfo, unless all spawns completed. """
-    my_id = JobInfo['spawn_id'][-1]
-    JobInfo = get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], HoldFile=True)
+
+    conn = open_db(db_connection)
+    JobInfo = get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'],
+                           db_connection=conn)
     if JobInfo['state'] != 'spawn':
         # must not leave function with an ambiguous state in JobInfo
         # e.g., if job has been re-submitted by some one/job
         # (unknown logic follows)
-        raise Exception('unknown state [{}] encountered for spawned ' +
-                        'job ({}, {}, {})'.format(JobInfo['state'],
-                                                  JobInfo['BatchID'],
-                                                  JobInfo['JobIndex']))
+        raise Exception(f"""unknown state "{JobInfo['state']}" encountered for spawned
+                            job ({JobInfo['BatchID']}, {JobInfo['JobIndex']})""")
 
-    JobInfo['spawn_complete'].add(my_id)
-    try:
-        JobInfo['PBS_ID'].remove(PBS_ID)
-        JobInfo['hostname'].remove(hostname)
-    except:
-        # if my PBS_ID is not in JobInfo, this possibly means
-        # that two running spawns collided and share the same spawn_id
-        print('resubmitting a single spawn')
-        update_job(JobInfo, Release=True)
-        submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
-        JobInfo = get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], HoldFile=True)
+    # first, set current spawn state to complete
+    # (use same db_connection to make sure that no other job sees that I am done)
+    conn.execute("""UPDATE spawn
+                    SET spawn_state='complete' WHERE
+                    BatchID=? AND JobIndex=? AND PBS_ID=?""",
+                    [JobInfo['BatchID'], JobInfo['JobIndex'],
+                     JobInfo['PBS_ID'][0]])
 
-
-    is_missing = [s for s in JobInfo['spawn_id']
-                  if s not in JobInfo['spawn_complete']]
-
-    if len(JobInfo['spawn_id']) != JobInfo['spawn_count']:  # (1)
-        # some spawns were not submitted or have yet to start running
-        # (nothing wrong, or the following:)
-        print('if queue is *empty*, consider using',
-              'power.spawn_resubmit({BatchID}, {JobIndex})'.format(**JobInfo))
-        # shouldn't happen but sometimes does, after all spawns submitted,
-        # probably because of job collision
-        # tried to work this out by file locks and delaying submission
-        # NOTE: cannot resubmit at this point because jobs may still be queued
-        update_job(JobInfo, Release=True)
-
-    elif len(is_missing) == 0:  # (2)
-        # all spawns submitted [from (1)], and
-        # all spawns complete [from (2)], so
-        # reinstate job id and submit state (so it is recognized by get_queue())
-        JobInfo['state'] = 'submit'
-        JobInfo['hostname'] = hostname
-        JobInfo['PBS_ID'] = PBS_ID
-        update_job(JobInfo, Release=True)
-        # set but not update yet (delay post-completion submissions)
+    # second, get all states of spawns
+    spawn_dict = spawn_get_info(JobInfo['BatchID'], JobInfo['JobIndex'],
+                                db_connection=conn)
+    if (pd.Series(spawn_dict['spawn_state']) == 'complete').all():
+        # update parent job, remove spawns from DB
+        JobInfo.update(spawn_dict)
         JobInfo['state'] = 'complete'
+        update_job(JobInfo, db_connection=conn)
 
-    elif len(JobInfo['PBS_ID']) == 0:  # (3)
-        # some missing spawns exist [from (2)], and
-        # no other spawns running [from (3)], and
-        # no other spawns queued [from (1)], so
-        # re-submit
-        print('missing spawns')
-        for m in is_missing:
-            if m in JobInfo['spawn_resub']:
-                continue  # only once
-            JobInfo['spawn_id'].remove(m)  # (by value)
-            JobInfo['spawn_resub'].add(m)
-        update_job(JobInfo, Release=True)
-        spawn_resubmit(JobInfo['BatchID'], JobInfo['JobIndex'])
+        spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'],
+                          db_connection=conn)
 
-    else:
-        update_job(JobInfo, Release=True)
+    close_db(conn, db_connection)
 
     return JobInfo
 
@@ -934,14 +934,14 @@ def init_db(conn):
     # no metadata for spawn jobs (what is needed is a copy of the metadata
     # in the job table + a unique SpawnID)
     conn.execute("""CREATE TABLE spawn(
-                    idx         INTEGER     PRIMARY KEY AUTOINCREMENT
+                    idx         INTEGER     PRIMARY KEY AUTOINCREMENT,
                     BatchID     INT     NOT NULL,
                     JobIndex    INT     NOT NULL,
                     SpawnID     INT     NOT NULL,
-                    PBS_ID      INT     NOT NULL,
+                    PBS_ID      TEXT    NOT NULL,
                     stdout      TEXT    NOT NULL,
                     stderr      TEXT    NOT NULL,
-                    state       INT     NOT NULL
+                    spawn_state       TEXT    NOT NULL
                     );""")
 
 
