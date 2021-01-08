@@ -181,7 +181,8 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
     Qsub = ['qsub', '-q', PBS_queue, '-e', ErrDir, '-o', OutDir, '-l']
 
     for j in make_iter(JobIndex):
-        job = get_job_info(BatchID, j, HoldFile=True)
+        conn = open_db()
+        job = get_job_info(BatchID, j, HoldFile=True, db_connection=conn)
         print('submiting:\t{}'.format(job['script']))
         if job['state'] != 'init':
             warnings.warn('already submitted')
@@ -208,6 +209,7 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
                 del job['qstat']
 
             update_job(job, Release=True)
+            close_db(conn)
             return
 
         # Spawn==True
@@ -215,7 +217,8 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
             job['state'] = 'spawn'
             update_job(job, Release=True)
 
-        spawn_add_to_db(BatchID, JobIndex, submit_id)
+        spawn_add_to_db(BatchID, JobIndex, submit_id, db_connection=conn)
+        close_db(conn)
 
 
 def parse_qstat(text):
