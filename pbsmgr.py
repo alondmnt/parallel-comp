@@ -474,46 +474,54 @@ def get_id():
     return int(datetime.now().strftime('%Y%m%d%H%M%S'))
 
 
-def update_job(JobInfo, Release=False, db_connection=None):
+def update_job(JobInfo, Release=False, db_connection=None, tries=3):
     """ Release is ignored but kept for backward compatibility. """
 
-    conn = open_db(db_connection)
-    BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
-    md5 = list(conn.execute(f"""SELECT md5, idx FROM job WHERE
-                                BatchID={BatchID} AND
-                                JobIndex={JobIndex}"""))
-    if len(md5) != 1:
-        raise Exception('job is not unique (%d)' % len(md5))
-    # here we're ensuring that JobInfo contains an updated version
-    # of the data, that is consistent with the DB
-    if md5[0][0] != JobInfo['md5']:
-        raise Exception(f'job ({BatchID}, {JobIndex}) was overwritten by another process')
+    for t in range(tries):
+        try:
+            conn = open_db(db_connection)
+            BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
+            md5 = list(conn.execute(f"""SELECT md5, idx FROM job WHERE
+                                        BatchID={BatchID} AND
+                                        JobIndex={JobIndex}"""))
+            if len(md5) != 1:
+                raise Exception('job is not unique (%d)' % len(md5))
+            # here we're ensuring that JobInfo contains an updated version
+            # of the data, that is consistent with the DB
+            if md5[0][0] != JobInfo['md5']:
+                raise Exception(f'job ({BatchID}, {JobIndex}) was overwritten by another process')
 
-    metadata = pack_job(JobInfo)
-    # we INSERT, then DELETE the old entry, to catch events where two jobs
-    # somehow managed to write (almost) concurrently - the second will fail
-    conn.execute("""INSERT INTO job(JobIndex, BatchID, state,
-                                    priority, metadata, md5)
-                    VALUES (?,?,?,?,?,?)""",
-                 [JobInfo['JobIndex'], JobInfo['BatchID'],
-                  JobInfo['state'], JobInfo['priority'],
-                  metadata, JobInfo['md5']])
+            metadata = pack_job(JobInfo)
+            # we INSERT, then DELETE the old entry, to catch events where two jobs
+            # somehow managed to write (almost) concurrently - the second will fail
+            conn.execute("""INSERT INTO job(JobIndex, BatchID, state,
+                                            priority, metadata, md5)
+                            VALUES (?,?,?,?,?,?)""",
+                         [JobInfo['JobIndex'], JobInfo['BatchID'],
+                          JobInfo['state'], JobInfo['priority'],
+                          metadata, JobInfo['md5']])
 
-    conn.execute("""DELETE FROM job
-                    WHERE idx=? AND BatchID=? AND JobIndex=?""",
-                 [md5[0][1], JobInfo['BatchID'], JobInfo['JobIndex']])
-    if conn.total_changes < 2:
-        raise Exception('failed to update job' +
-                        '(probably trying to delete an already deleted entry)')
+            conn.execute("""DELETE FROM job
+                            WHERE idx=? AND BatchID=? AND JobIndex=?""",
+                         [md5[0][1], JobInfo['BatchID'], JobInfo['JobIndex']])
+            if conn.total_changes < 2:
+                raise Exception('failed to update job' +
+                                '(probably trying to delete an already deleted entry)')
 
-#        conn.execute(f"""UPDATE job
-#                         SET metadata=?, md5=?, state=?, priority=? WHERE
-#                         BatchID={BatchID} AND
-#                         JobIndex={JobIndex}""",
-#                         [metadata, JobInfo['md5'],
-#                          JobInfo['state'], JobInfo['priority']])
+        #        conn.execute(f"""UPDATE job
+        #                         SET metadata=?, md5=?, state=?, priority=? WHERE
+        #                         BatchID={BatchID} AND
+        #                         JobIndex={JobIndex}""",
+        #                         [metadata, JobInfo['md5'],
+        #                          JobInfo['state'], JobInfo['priority']])
 
-    close_db(conn, db_connection)
+            close_db(conn, db_connection)
+            break
+
+        except Exception as err:
+            print(f'update_job: try {t+1} failed')
+            if t == tries - 1:
+                raise(err)
 
 
 def pack_job(JobInfo):
