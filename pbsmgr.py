@@ -202,7 +202,9 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
         if not Spawn:
             job['state'] = 'submit'
             job['submit_id'] = submit_id
-            job['subtime'] = get_id()
+            job['subtime'] = get_time()
+            dict_append(job, 'stdout', '{}/{}/logs/{}.OU'.format(JobDir, BatchID, submit_id))
+            dict_append(job, 'stderr', '{}/{}/logs/{}.ER'.format(JobDir, BatchID, submit_id))
             if 'PBS_ID' in job:
                 del job['PBS_ID']
             if 'qstat' in job:
@@ -280,7 +282,7 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
 
     # reads from global job queue file
     Q = get_sql_queue(QFile, Filter)
-    curr_time = time.time()
+    curr_time = get_time()
     powQ = get_pbs_queue()
 
     missing = {}  # submitted but not running
@@ -457,8 +459,6 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
     JobInfo['hostname'] = hostname
     JobInfo['state'] = 'run'
 
-    dict_append(JobInfo, 'stdout', '{}/{}/logs/{}'.format(JobDir, BatchID, LogOut))
-    dict_append(JobInfo, 'stderr', '{}/{}/logs/{}'.format(JobDir, BatchID, LogErr))
     update_job(JobInfo, Release=True, db_connection=db_connection)
 
     return JobInfo
@@ -468,11 +468,11 @@ def get_job_template(SetID=False):
     res = deepcopy(JobTemplate)
     if SetID:
         time.sleep(1)  # precaution against non-unique IDs
-        res['BatchID'] = get_id()
+        res['BatchID'] = get_time()
     return res
 
 
-def get_id():
+def get_time():
     """ readable timestamp in seconds. """
     return int(datetime.now().strftime('%Y%m%d%H%M%S'))
 
