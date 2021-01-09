@@ -265,7 +265,8 @@ def get_pbs_queue():
     return Q
 
 
-def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
+def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
+              Display=None, **Filter):
     """ Verbose mode prints a job report to screen, otherwise a dictionary Q
         is returned with the metadata of all jobs.
         ResetMissing will set the state of jobs that failed while online.
@@ -334,16 +335,21 @@ def get_queue(Verbose=True, ResetMissing=False, Display=None, **Filter):
                     shutil.rmtree(jobDir)
                 set_job_field(BatchID, JobIndex, {'state': 'init'})
 
-    if Verbose:
-        print('\nmissing jobs: {}'.format(missing))
-        cnt['complete'] += cnt['collected']
-        print('\ntotal jobs on PBS queue: {}'.format(len(powQ)))
-        try:
-             print('running/complete/total: {online}/{complete}/{total}'.format(**cnt))
-        except:
-            pass
-    else:
+    if not Verbose:
         return Q
+
+    # Verbose=True
+    print('\nmissing jobs: {}'.format(missing))
+    cnt['complete'] += cnt['collected']
+    print('\ntotal jobs on PBS queue: {}'.format(len(powQ)))
+    try:
+         print('running/complete/total: {online}/{complete}/{total}'.format(**cnt))
+    except:
+        pass
+
+    if ReportMissing:
+        for BatchID in missing:
+            print_log(BatchID, missing[BatchID], 'stderr')
 
 
 def get_sql_queue(QFile, Filter={}):
