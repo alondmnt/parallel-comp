@@ -28,17 +28,19 @@ ServerPath = '/tamir1/'
 ServerHost = 'tau.ac.il'
 QFile = '/tamir1/dalon/RP/Consistency/jobs/job_queue.db'  # '../jobs/job_queue.pkl'
 JobDir = '../jobs/'
+PBS_suffix = '.power8.tau.ac.il'
+LogDir = JobDir + '{BatchID}/logs/{submit_id}' + PBS_suffix
+LogOut = LogDir + '.OU'  # template
+LogErr = LogDir + '.ER'
 PBS_queue = 'tamir-nano4'
 
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on cluster
-    PBS_ID = os.environ['PBS_JOBID'].split('.')[0]
-    LogOut = '{}.OU'.format(os.environ['PBS_JOBID'])
-    LogErr = '{}.ER'.format(os.environ['PBS_JOBID'])
+    PBS_ID_raw = os.environ['PBS_JOBID']
+    PBS_ID = PBS_ID_raw.replace(PBS_suffix, '')
 else:
+    PBS_ID_raw = None
     PBS_ID = None
-    LogOut = None
-    LogErr = None
 if 'HOSTNAME' in os.environ:
     hostname = os.environ['HOSTNAME']
 else:
@@ -195,7 +197,8 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
         if 'queue' in job:
             this_sub[2] = job['queue']
         if OutFile is None:
-            submit_id = subprocess.check_output(this_sub + [job['script']]).decode('UTF-8').split('.')[0]
+            submit_id_raw = subprocess.check_output(this_sub + [job['script']]).decode('UTF-8').replace('\n', '')
+            submit_id = submit_id_raw.replace(PBS_suffix, '')
         else:
             OutFile.write(job['script'] + '\n')
 
@@ -203,8 +206,8 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
             job['state'] = 'submit'
             job['submit_id'] = submit_id
             job['subtime'] = get_time()
-            dict_append(job, 'stdout', '{}/{}/logs/{}.OU'.format(JobDir, BatchID, submit_id))
-            dict_append(job, 'stderr', '{}/{}/logs/{}.ER'.format(JobDir, BatchID, submit_id))
+            dict_append(job, 'stdout', LogOut.format(**job))
+            dict_append(job, 'stderr', LogErr.format(**job))
             if 'PBS_ID' in job:
                 del job['PBS_ID']
             if 'qstat' in job:
@@ -721,8 +724,6 @@ def spawn_submit(JobInfo, N):
 
 def spawn_add_to_db(BatchID, JobIndex, PBS_ID, db_connection=None):
     conn = open_db(db_connection)
-    stdout = '{}/{}/logs/{}.OU'.format(JobDir, BatchID, PBS_ID)
-    stderr = '{}/{}/logs/{}.ER'.format(JobDir, BatchID, PBS_ID)
     # auto-numbering of spawns
     # TODO: if we ever delete some row, auto-numbering will fail and may
     #       generate already existing IDs
@@ -734,7 +735,8 @@ def spawn_add_to_db(BatchID, JobIndex, PBS_ID, db_connection=None):
                                       spawn_state, stdout, stderr)
                     VALUES (?,?,?,?,?,?,?)""",
                  [BatchID, JobIndex, SpawnID, PBS_ID,
-                  'submit', stdout, stderr])
+                  'submit', LogOut.format(BatchID=BatchID, submit_id=PBS_ID),
+                  LogErr.format(BatchID=BatchID, submit_id=PBS_ID)])
     close_db(conn, db_connection)
 
 
