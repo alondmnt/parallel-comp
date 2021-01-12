@@ -402,7 +402,7 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
     for k in pid_keys:
         if k in JobInfo:
             JobInfo[k] = make_iter(JobInfo[k])
-            pid_list += JobInfo[k]
+            pid_list += [j for j in JobInfo[k] if j not in pid_list]
 
     for pid in pid_list:
         if not subprocess.call(['qdel', pid]):  # success
@@ -493,11 +493,12 @@ def get_time():
 
 def update_job(JobInfo, Release=False, db_connection=None, tries=3):
     """ Release is ignored but kept for backward compatibility. """
+    BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
+    PID = JobInfo['PBS_ID'] if 'PBS_ID' in JobInfo else 'unkown_PBS_ID'
 
     for t in range(tries):
         try:
             conn = open_db(db_connection)
-            BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
             md5 = list(conn.execute(f"""SELECT idx, metadata, md5
                                         FROM job WHERE
                                         BatchID={BatchID} AND
@@ -508,7 +509,7 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=3):
             # of the data, that is consistent with the DB
             if md5[0][-1] != JobInfo['md5']:
                 other_id = unpack_job(md5[0])['PBS_ID']
-                raise Exception(f'job ({BatchID}, {JobIndex}, {JobInfo["PBS_ID"]}) was overwritten by another process ({other_id})')
+                raise Exception(f'job ({BatchID}, {JobIndex}, {PID}) was overwritten by another process ({other_id})')
 
             metadata = pack_job(JobInfo)
             # we INSERT, then DELETE the old entry, to catch events where two jobs
@@ -731,11 +732,11 @@ def spawn_submit(JobInfo, N):
 
     spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
 
-    for _ in range(N):
-        submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
-
     # adding self
     spawn_add_to_db(JobInfo['BatchID'], JobInfo['JobIndex'], PBS_ID)
+
+    for _ in range(N):
+        submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
 
     # update current job with spawn ID
     return get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], SetID=True)
