@@ -7,21 +7,23 @@ see also: README.md, example.ipynb
 Created on Wed Mar 18 22:45:50 2015
 """
 
-import re
+from copy import deepcopy
+from collections import Counter
+from datetime import datetime
+from glob import iglob
+import hashlib
 import os
-import subprocess
-import time
 import pickle
 pickle.HIGHEST_PROTOCOL = 2  # for compatibility with python2
-from datetime import datetime
-import hashlib
+import re
 import shutil
 import sqlite3
+import subprocess
+import time
 import warnings
 import zlib
+
 import pandas as pd
-from collections import Counter
-from copy import deepcopy
 
 
 ServerPath = '/tamir1/'
@@ -215,7 +217,7 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
 
             update_job(job, Release=True)
             close_db(conn)
-            return
+            continue
 
         # Spawn==True
         if job['state'] != 'spawn':
@@ -230,9 +232,10 @@ def parse_qstat(text):
     JobInfo = {}
     text = text.decode('utf-8')
 #    print('\n')
+    line_parse = re.compile(r'([\w.]*) = ([\w\s:_\-/]*)')
     for line in text.splitlines():
 #        print(line)
-        hit = re.match(r'([\w.]*) = ([\w\s:_\-/]*)', line.strip())
+        hit = line_parse.match(line.strip())
         if hit is not None:
             JobInfo[hit.group(1)] = hit.group(2)
     return JobInfo
@@ -257,10 +260,12 @@ def get_pbs_queue():
     data = subprocess.check_output(['qstat', '-u', os.environ['USER']],
                                    universal_newlines=True)
     data = data.split('\n')
+    job_parse = re.compile(r'(\d+).')
+    line_parse = re.compile(r'\s+')
     for line in data:
-        job = re.match(r'(\d+).', line)  # power
+        job = job_parse.match(line)  # power
         if job:
-            line = re.split(r'\s+', line)
+            line = line_parse.split(line)
             Q[job.group(1)] = [line[3], line[9]]
     return Q
 
@@ -493,15 +498,17 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=3):
         try:
             conn = open_db(db_connection)
             BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
-            md5 = list(conn.execute(f"""SELECT md5, idx FROM job WHERE
+            md5 = list(conn.execute(f"""SELECT idx, metadata, md5
+                                        FROM job WHERE
                                         BatchID={BatchID} AND
                                         JobIndex={JobIndex}"""))
             if len(md5) != 1:
                 raise Exception('job is not unique (%d)' % len(md5))
             # here we're ensuring that JobInfo contains an updated version
             # of the data, that is consistent with the DB
-            if md5[0][0] != JobInfo['md5']:
-                raise Exception(f'job ({BatchID}, {JobIndex}) was overwritten by another process')
+            if md5[0][-1] != JobInfo['md5']:
+                other_id = unpack_job(md5[0])['PBS_ID']
+                raise Exception(f'job ({BatchID}, {JobIndex}, {JobInfo["PBS_ID"]}) was overwritten by another process ({other_id})')
 
             metadata = pack_job(JobInfo)
             # we INSERT, then DELETE the old entry, to catch events where two jobs
@@ -515,17 +522,10 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=3):
 
             conn.execute("""DELETE FROM job
                             WHERE idx=? AND BatchID=? AND JobIndex=?""",
-                         [md5[0][1], JobInfo['BatchID'], JobInfo['JobIndex']])
+                         [md5[0][0], JobInfo['BatchID'], JobInfo['JobIndex']])
             if conn.total_changes < 2:
                 raise Exception('failed to update job' +
                                 '(probably trying to delete an already deleted entry)')
-
-        #        conn.execute(f"""UPDATE job
-        #                         SET metadata=?, md5=?, state=?, priority=? WHERE
-        #                         BatchID={BatchID} AND
-        #                         JobIndex={JobIndex}""",
-        #                         [metadata, JobInfo['md5'],
-        #                          JobInfo['state'], JobInfo['priority']])
 
             close_db(conn, db_connection)
             break
@@ -564,8 +564,6 @@ def add_batch_to_queue(BatchID, Jobs):
     """ provide a list of job info dicts, will replace any existing
         batch. unlike add_job_to_queue it ensures that BatchID doe not
         exist in queue, and that all given jobs are from the same batch. """
-    if not os.path.isfile(QFile):
-        init_db(QFile)
 
     Jobs = make_iter(Jobs)
     if not all([BatchID == job['BatchID'] for job in Jobs]):
@@ -583,8 +581,6 @@ def add_job_to_queue(Jobs):
     """ job info or a list of job info dicts supported.
         automatically sets the JobIndex id in each JobInfo,
         and saves the metdata. """
-    if not os.path.isfile(QFile):
-        init_db(QFile)
 
     batch_index = {}
     with open_db() as conn:
@@ -682,19 +678,35 @@ def remove_batch_by_state(state):
             remove_batch(BatchID)
 
 
-def clean_temp_folders():
+def clean_temp_folders(batch_list=None):
     """ clean folders from temp files, that are sometimes left
         when jobs get stuck. """
-    Q = get_queue(Verbose=False)
+    if batch_list is None:
+        batch_list = get_queue(Verbose=False).keys()
+
     rmv_list = []
-    for BatchID in Q.keys():
-        for job in Q[BatchID]:
+    for BatchID in make_iter(batch_list):
+        for job in get_batch_info(BatchID):
             tempdir = JobDir + '{}/{}'.format(BatchID, job['JobIndex'])
             if os.path.isdir(tempdir):
                 shutil.rmtree(tempdir)
                 rmv_list.append(tempdir)
     print('removed {} temp dirs'.format(len(rmv_list)))
     return rmv_list
+
+
+def clean_temp_files(dir_str=['*.genes.*', '*.len*.npz'], batch_list=None):
+    """ clean files based on [dir_str]. e.g., '*.genes'. """
+    if batch_list is None:
+        batch_list = get_queue(Verbose=False).keys()
+
+    rmv_dict = Counter()
+    for BatchID in make_iter(batch_list):
+        for pattern in make_iter(dir_str):
+            rmv_dict[BatchID] += len([os.remove(f) for f in
+                    iglob(f'{JobDir}{BatchID}/{pattern}')])
+
+    print(f'files removed:\n{rmv_dict}')
 
 
 def dict_append(dictionary, key, value):
@@ -715,6 +727,7 @@ def spawn_submit(JobInfo, N):
     """ run the selected job multiple times in parallel. job needs to handle
         'spawn' state for correct logic: i.e., only last job to complete
         updates additional fields in JobInfo and sets it to 'complete'. """
+    print(f'submitting {N} spawn jobs')
 
     spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
 
@@ -968,6 +981,8 @@ def open_db(db_connection=None):
     """ returns a connection to SQL DB whether you provide an
         existing one or not. """
     if db_connection is None:
+        if not os.path.isfile(QFile):
+            init_db(QFile)
         return sqlite3.connect(QFile)
     else:
         return db_connection
