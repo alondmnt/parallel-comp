@@ -291,9 +291,9 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
 
     # reads from global job queue file
     Q = get_sql_queue(QFile, Filter)
-    curr_time = get_time()
-    powQ = get_pbs_queue()
+    Q_server = get_pbs_queue()
 
+    maybe_online = {'submit', 'spawn', 'run'}
     missing = {}  # submitted but not running
     cnt = Counter()
     cnt['total'] = 0
@@ -306,38 +306,45 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
             continue
 
         state = {}
-        for pinfo in Q[BatchID]:
+        for job in Q[BatchID]:
+            if job['state'] == 'spawn':
+                job.update(spawn_get_info(job['BatchID'], job['JobIndex']))
+
             cnt['total'] += 1
-            job_index = pinfo['JobIndex']
+            job_index = job['JobIndex']
+            if 'PBS_ID' not in job:
+                cnt[job['state']] += 1
+                dict_append(state, job['state'], job_index)
+                continue
 
             # checking job against current PBS queue
             # (for online and crashed jobs)
-            if 'PBS_ID' in pinfo:
-                for pid in make_iter(pinfo['PBS_ID']):
-                    if pid in powQ:
-                        if powQ[pid][1] == 'R':
-                            job_index = str(job_index) + '*'
-                            cnt['online'] += 1
-                    elif pinfo['state'] in {'submit', 'spawn', 'run'} and \
-                            'subtime' in pinfo:
-                        if pinfo['subtime'] < curr_time:
-                            dict_append(missing, BatchID, job_index)
-            cnt[pinfo['state']] += 1
-            dict_append(state, pinfo['state'], job_index)
+            found_id = False
+            for pid in make_iter(job['PBS_ID']):
+                if pid in Q_server and Q_server[pid][1] == 'R':
+                    job_index = str(job_index) + '*'
+                    cnt['online'] += 1
+                    found_id = True
+
+            if not found_id and job['state'] in maybe_online:
+                dict_append(missing, BatchID, job_index)
+
+            cnt[job['state']] += 1
+            dict_append(state, job['state'], job_index)
 
         if Verbose:
             if Display is not None:
                 state = {s: p for s, p in state.items() if s in Display}
             if len(state) > 0:
-                print('\n{}: {}'.format(BatchID, '/'.join(pinfo['name'])))
+                print('\n{}: {}'.format(BatchID, '/'.join(job['name'])))
                 print(state)
 
     if ResetMissing:
         for BatchID in missing:
             for JobIndex in missing[BatchID]:
-                jobDir = JobDir + '{}/{}'.format(BatchID, JobIndex)
-                if os.path.isdir(jobDir):
-                    shutil.rmtree(jobDir)
+                job_dir = JobDir + '{}/{}'.format(BatchID, JobIndex)
+                if os.path.isdir(job_dir):
+                    shutil.rmtree(job_dir)
                 set_job_field(BatchID, JobIndex, {'state': 'init'})
 
     if not Verbose:
@@ -346,7 +353,7 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
     # Verbose=True
     print('\nmissing jobs: {}'.format(missing))
     cnt['complete'] += cnt['collected']
-    print('\ntotal jobs on PBS queue: {}'.format(len(powQ)))
+    print('\ntotal jobs on PBS queue: {}'.format(len(Q_server)))
     try:
          print('running/complete/total: {online}/{complete}/{total}'.format(**cnt))
     except:
