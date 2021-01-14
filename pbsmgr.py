@@ -615,8 +615,9 @@ def add_job_to_queue(Jobs):
                           job['priority'], metadata, job['md5']])
 
 
-def set_complete(BatchID, JobIndex):
-    JobInfo = get_job_info(BatchID, JobIndex, HoldFile=True)
+def set_complete(BatchID=None, JobIndex=None, JobInfo=None):
+    if JobInfo is None:
+        JobInfo = get_job_info(BatchID, JobIndex, HoldFile=True)
     JobInfo['qstat'] = get_qstat()
     JobInfo['state'] = 'complete'
     update_job(JobInfo, Release=True)
@@ -825,8 +826,11 @@ def spawn_complete(JobInfo, db_connection=None):
     if (pd.Series(spawn_dict['spawn_state']) == 'complete').all():
         # update parent job, remove spawns from DB
         JobInfo.update(spawn_dict)
-        JobInfo['state'] = 'complete'
+        JobInfo['state'] = 'run'
         update_job(JobInfo, db_connection=conn)
+        JobInfo['state'] = 'complete'
+        # signal calling function that we're done, but defer broadcasting
+        # to all other jobs yet
 
         spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'],
                           db_connection=conn)
