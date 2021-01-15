@@ -26,7 +26,6 @@ import zlib
 import pandas as pd
 
 
-ServerPath = '/tamir1/'
 ServerHost = 'tau.ac.il'
 QFile = '/tamir1/dalon/RP/Consistency/jobs/job_queue.db'  # '../jobs/job_queue.pkl'
 JobDir = '../jobs/'
@@ -35,6 +34,7 @@ LogDir = JobDir + '{BatchID}/logs/{submit_id}' + PBS_suffix
 LogOut = LogDir + '.OU'  # template
 LogErr = LogDir + '.ER'
 PBS_queue = 'tamir-nano4'
+WriteTries = 5
 
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on cluster
@@ -501,7 +501,7 @@ def get_time():
     return int(datetime.now().strftime('%Y%m%d%H%M%S'))
 
 
-def update_job(JobInfo, Release=False, db_connection=None, tries=3):
+def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries):
     """ Release is ignored but kept for backward compatibility. """
     BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
     PID = JobInfo['PBS_ID'] if 'PBS_ID' in JobInfo else 'unkown_PBS_ID'
@@ -515,13 +515,11 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=3):
                                         BatchID={BatchID} AND
                                         JobIndex={JobIndex}"""))
             if len(md5) != 1:
-                close_db(conn)
                 raise Exception('job is not unique (%d)' % len(md5))
             # here we're ensuring that JobInfo contains an updated version
             # of the data, that is consistent with the DB
             if md5[0][-1] != JobInfo['md5']:
                 other_id = unpack_job(md5[0])['PBS_ID']
-                close_db(conn)
                 raise Exception(f'job ({BatchID}, {JobIndex}, {PID}) was overwritten by another process ({other_id})')
 
             metadata = pack_job(JobInfo)
@@ -538,7 +536,6 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=3):
                             WHERE idx=? AND BatchID=? AND JobIndex=?""",
                          [md5[0][0], JobInfo['BatchID'], JobInfo['JobIndex']])
             if (conn.total_changes - n_change) < 2:
-                close_db(conn)
                 raise Exception('failed to update job' +
                                 '(probably trying to delete an already deleted entry)')
 
@@ -546,6 +543,7 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=3):
             break
 
         except Exception as err:
+            close_db(conn)
             print(f'update_job: try {t+1} failed with:\n{err}\n')
             JobInfo['md5'] = md5[0][-1]  # revert to previous md5 to pass tests
             if t == tries - 1:
@@ -763,30 +761,49 @@ def spawn_submit(JobInfo, N):
     return get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], SetID=True)
 
 
-def spawn_add_to_db(BatchID, JobIndex, PBS_ID, db_connection=None):
-    conn = open_db(db_connection)
-    # auto-numbering of spawns
-    # TODO: if we ever delete some row, auto-numbering will fail and may
-    #       generate already existing IDs
-    SpawnID = len(list(
-            conn.execute(f"""SELECT SpawnID FROM spawn
-                             WHERE BatchID={BatchID} AND
-                                   JobIndex={JobIndex}""")))
-    conn.execute("""INSERT INTO spawn(BatchID, JobIndex, SpawnID, PBS_ID,
-                                      spawn_state, stdout, stderr)
-                    VALUES (?,?,?,?,?,?,?)""",
-                 [BatchID, JobIndex, SpawnID, PBS_ID,
-                  'submit', LogOut.format(BatchID=BatchID, submit_id=PBS_ID),
-                  LogErr.format(BatchID=BatchID, submit_id=PBS_ID)])
-    close_db(conn, db_connection)
+def spawn_add_to_db(BatchID, JobIndex, PBS_ID, db_connection=None,
+                    tries=WriteTries):
+    for t in range(tries):
+        try:
+            conn = open_db(db_connection)
+            # auto-numbering of spawns
+            # TODO: if we ever delete some row, auto-numbering will fail and may
+            #       generate already existing IDs
+            SpawnID = len(list(
+                    conn.execute(f"""SELECT SpawnID FROM spawn
+                                     WHERE BatchID={BatchID} AND
+                                           JobIndex={JobIndex}""")))
+            conn.execute("""INSERT INTO spawn(BatchID, JobIndex, SpawnID, PBS_ID,
+                                              spawn_state, stdout, stderr)
+                            VALUES (?,?,?,?,?,?,?)""",
+                         [BatchID, JobIndex, SpawnID, PBS_ID,
+                          'submit', LogOut.format(BatchID=BatchID, submit_id=PBS_ID),
+                          LogErr.format(BatchID=BatchID, submit_id=PBS_ID)])
+            close_db(conn, db_connection)
+            break
+
+        except Exception as err:
+            close_db(conn)
+            print(f'spawn_add_to_db: try {t+1} failed with:\n{err}\n')
+            if t == tries - 1:
+                raise(err)
 
 
-def spawn_del_from_db(BatchID, JobIndex, db_connection=None):
-    conn = open_db(db_connection)
-    conn.execute("""DELETE FROM spawn WHERE
-                    BatchID=? AND JobIndex=?""",
-                    [BatchID, JobIndex])
-    close_db(conn, db_connection)
+def spawn_del_from_db(BatchID, JobIndex, db_connection=None, tries=WriteTries):
+    for t in range(tries):
+        try:
+            conn = open_db(db_connection)
+            conn.execute("""DELETE FROM spawn WHERE
+                            BatchID=? AND JobIndex=?""",
+                            [BatchID, JobIndex])
+            close_db(conn, db_connection)
+            break
+
+        except Exception as err:
+            close_db(conn)
+            print(f'spawn_del_from_db: try {t+1} failed with:\n{err}\n')
+            if t == tries - 1:
+                raise(err)
 
 
 def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None):
@@ -811,45 +828,54 @@ def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None):
     return spawn_query.to_dict(orient='list')  # return a dict
 
 
-def spawn_complete(JobInfo, db_connection=None, tries=3):
+def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
     """ signal that one spawn has ended successfully. only update done by
         current job to JobInfo, unless all spawns completed. """
 
-    conn = open_db(db_connection)
-    JobInfo = get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'],
-                           db_connection=conn)
-    if JobInfo['state'] != 'spawn':
-        # must not leave function with an ambiguous state in JobInfo
-        # e.g., if job has been re-submitted by some one/job
-        # (unknown logic follows)
-        close_db(conn)
-        raise Exception(f"""unknown state "{JobInfo['state']}" encountered for spawned
-                            job ({JobInfo['BatchID']}, {JobInfo['JobIndex']})""")
+    for t in range(tries):
+        try:
+            conn = open_db(db_connection)
+            JobInfo = get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'],
+                                   db_connection=conn)
+            if JobInfo['state'] != 'spawn':
+                # must not leave function with an ambiguous state in JobInfo
+                # e.g., if job has been re-submitted by some one/job
+                # (unknown logic follows)
+                close_db(conn)
+                raise Exception(f"""unknown state "{JobInfo['state']}" encountered for spawned
+                                    job ({JobInfo['BatchID']}, {JobInfo['JobIndex']})""")
 
-    # first, set current spawn state to complete
-    # (use same db_connection to make sure that no other job sees that I am done)
-    conn.execute("""UPDATE spawn
-                    SET spawn_state='complete' WHERE
-                    BatchID=? AND JobIndex=? AND PBS_ID=?""",
-                    [JobInfo['BatchID'], JobInfo['JobIndex'],
-                     JobInfo['PBS_ID'][0]])
+            # first, set current spawn state to complete
+            # (use same db_connection to make sure that no other job sees that I am done)
+            conn.execute("""UPDATE spawn
+                            SET spawn_state='complete' WHERE
+                            BatchID=? AND JobIndex=? AND PBS_ID=?""",
+                            [JobInfo['BatchID'], JobInfo['JobIndex'],
+                             JobInfo['PBS_ID'][0]])
 
-    # second, get all states of spawns
-    spawn_dict = spawn_get_info(JobInfo['BatchID'], JobInfo['JobIndex'],
-                                db_connection=conn)
-    if (pd.Series(spawn_dict['spawn_state']) == 'complete').all():
-        # update parent job, remove spawns from DB
-        JobInfo.update(spawn_dict)
-        JobInfo['state'] = 'run'
-        update_job(JobInfo, db_connection=conn)
-        JobInfo['state'] = 'complete'
-        # signal calling function that we're done, but defer broadcasting
-        # to all other jobs yet
+            # second, get all states of spawns
+            spawn_dict = spawn_get_info(JobInfo['BatchID'], JobInfo['JobIndex'],
+                                        db_connection=conn)
+            if (pd.Series(spawn_dict['spawn_state']) == 'complete').all():
+                # update parent job, remove spawns from DB
+                JobInfo.update(spawn_dict)
+                JobInfo['state'] = 'run'
+                update_job(JobInfo, db_connection=conn)
+                JobInfo['state'] = 'complete'
+                # signal calling function that we're done, but defer broadcasting
+                # to all other jobs yet
 
-        spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'],
-                          db_connection=conn)
+                spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'],
+                                  db_connection=conn)
 
-    close_db(conn, db_connection)
+            close_db(conn, db_connection)
+            break
+
+        except Exception as err:
+            close_db(conn)
+            print(f'spawn_complete: try {t+1} failed with:\n{err}\n')
+            if t == tries - 1:
+                raise(err)
 
     return JobInfo
 
