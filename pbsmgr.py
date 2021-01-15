@@ -366,17 +366,18 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
 
 
 def get_sql_queue(QFile, Filter={}):
-    with open_db() as conn:
-        df = pd.read_sql_query('SELECT * FROM ' +
-                               """(SELECT j.*,
-                                          b.name,
-                                          b.organism,
-                                          b.data_type
-                                   FROM batch b INNER JOIN job j 
-                                   ON j.BatchID = b.BatchID) """ +
-                               ('WHERE ' + ' AND '.join(
-                                parse_filter(Filter))
-                                if len(Filter) else ''), conn)
+    conn = open_db()
+    df = pd.read_sql_query('SELECT * FROM ' +
+                           """(SELECT j.*,
+                                      b.name,
+                                      b.organism,
+                                      b.data_type
+                               FROM batch b INNER JOIN job j 
+                               ON j.BatchID = b.BatchID) """ +
+                           ('WHERE ' + ' AND '.join(
+                            parse_filter(Filter))
+                            if len(Filter) else ''), conn)
+    close_db(conn)
     return df.iloc[:, 1:].groupby('BatchID')\
         .apply(lambda df: df.sort_values('JobIndex')[['metadata', 'md5']]\
                .apply(unpack_job, axis=1)\
@@ -460,6 +461,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
                                       BatchID={BatchID} AND
                                       JobIndex={JobIndex}"""))
     if len(job_query) != 1:
+        close_db(conn)
         raise Exception('job is not unique (%d)' % len(job_query))
     job_query = job_query[0]
     JobInfo = unpack_job(job_query)
@@ -507,16 +509,19 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=3):
     for t in range(tries):
         try:
             conn = open_db(db_connection)
+            n_change = conn.total_changes
             md5 = list(conn.execute(f"""SELECT idx, metadata, md5
                                         FROM job WHERE
                                         BatchID={BatchID} AND
                                         JobIndex={JobIndex}"""))
             if len(md5) != 1:
+                close_db(conn)
                 raise Exception('job is not unique (%d)' % len(md5))
             # here we're ensuring that JobInfo contains an updated version
             # of the data, that is consistent with the DB
             if md5[0][-1] != JobInfo['md5']:
                 other_id = unpack_job(md5[0])['PBS_ID']
+                close_db(conn)
                 raise Exception(f'job ({BatchID}, {JobIndex}, {PID}) was overwritten by another process ({other_id})')
 
             metadata = pack_job(JobInfo)
@@ -532,7 +537,8 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=3):
             conn.execute("""DELETE FROM job
                             WHERE idx=? AND BatchID=? AND JobIndex=?""",
                          [md5[0][0], JobInfo['BatchID'], JobInfo['JobIndex']])
-            if conn.total_changes < 2:
+            if (conn.total_changes - n_change) < 2:
+                close_db(conn)
                 raise Exception('failed to update job' +
                                 '(probably trying to delete an already deleted entry)')
 
@@ -592,29 +598,31 @@ def add_job_to_queue(Jobs):
         automatically sets the JobIndex id in each JobInfo,
         and saves the metdata. """
 
+    conn = open_db()
     batch_index = {}
-    with open_db() as conn:
-        for job in make_iter(Jobs):
-            BatchID = job['BatchID']
+    for job in make_iter(Jobs):
+        BatchID = job['BatchID']
 
-            # setting JobIndex automatically
-            if BatchID not in batch_index:
-                batch_index[BatchID] = len(get_job_indices(BatchID))
-            if batch_index[BatchID] == 0:
-                # init new batch
-                conn.execute("""INSERT INTO batch
-                                VALUES (?,?,?,?)""",
-                                [BatchID, '/'.join(job['name']),
-                                 job['organism'], job['data_type']])
+        # setting JobIndex automatically
+        if BatchID not in batch_index:
+            batch_index[BatchID] = len(get_job_indices(BatchID))
+        if batch_index[BatchID] == 0:
+            # init new batch
+            conn.execute("""INSERT INTO batch
+                            VALUES (?,?,?,?)""",
+                            [BatchID, '/'.join(job['name']),
+                             job['organism'], job['data_type']])
 
-            job['JobIndex'] = batch_index[BatchID]
-            batch_index[BatchID] += 1
-            metadata = pack_job(job)
-            conn.execute("""INSERT INTO job(JobIndex, BatchID, state,
-                                            priority, metadata, md5)
-                            VALUES (?,?,?,?,?,?)""",
-                         [job['JobIndex'], BatchID, job['state'],
-                          job['priority'], metadata, job['md5']])
+        job['JobIndex'] = batch_index[BatchID]
+        batch_index[BatchID] += 1
+        metadata = pack_job(job)
+        conn.execute("""INSERT INTO job(JobIndex, BatchID, state,
+                                        priority, metadata, md5)
+                        VALUES (?,?,?,?,?,?)""",
+                     [job['JobIndex'], BatchID, job['state'],
+                      job['priority'], metadata, job['md5']])
+
+    close_db(conn)
 
 
 def set_complete(BatchID=None, JobIndex=None, JobInfo=None):
@@ -662,15 +670,18 @@ def set_batch_field(BatchID, Fields={'state': 'init'},
 
 
 def remove_batch(BatchID):
-    with open_db() as conn:
-        for batch in make_iter(BatchID):
-            WorkDir = JobDir + str(batch)
-            if os.path.isdir(WorkDir):
-                shutil.rmtree(WorkDir)
-            conn.execute(f"""DELETE FROM batch
-                             WHERE BatchID={batch}""")
-            conn.execute(f"""DELETE FROM job
-                             WHERE BatchID={batch}""")
+    conn = open_db()
+
+    for batch in make_iter(BatchID):
+        WorkDir = JobDir + str(batch)
+        if os.path.isdir(WorkDir):
+            shutil.rmtree(WorkDir)
+        conn.execute(f"""DELETE FROM batch
+                         WHERE BatchID={batch}""")
+        conn.execute(f"""DELETE FROM job
+                         WHERE BatchID={batch}""")
+
+    close_db(conn)
 
 
 # TODO: archive_batch(BatchID=None, Time=None)
@@ -811,6 +822,7 @@ def spawn_complete(JobInfo, db_connection=None, tries=3):
         # must not leave function with an ambiguous state in JobInfo
         # e.g., if job has been re-submitted by some one/job
         # (unknown logic follows)
+        close_db(conn)
         raise Exception(f"""unknown state "{JobInfo['state']}" encountered for spawned
                             job ({JobInfo['BatchID']}, {JobInfo['JobIndex']})""")
 
