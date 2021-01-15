@@ -68,12 +68,13 @@ JobTemplate =   {'BatchID': None,
                  'state': 'init'}
 
 
-def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False, **Filter):
+def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False,
+                Filter=''):
     """ submits all next available jobs according to job priorities.
         MaxJobs is loaded from [JobDir]/maxjobs unless specified (default=1000).
         ForceSubmit ignores another process currently submitting jobs (or an
         abandoned lock file).
-        Filter are fields that get_queue() accepts. """
+        Filter are SQL query conditions that get_queue() accepts. """
     if not running_on_cluster:
         print('submit_jobs: not running on cluster.')
         return
@@ -95,7 +96,7 @@ def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False, **Fil
         except:
             MaxJobs = 1000
 
-    Q = get_queue(Verbose=False, **Filter)
+    Q = get_queue(Verbose=False, Filter=Filter)
 
     """
     BATCH/JOB PRIORITY RULES
@@ -271,7 +272,7 @@ def get_pbs_queue():
 
 
 def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
-              Display=None, **Filter):
+              Display=None, Filter=''):
     """ Verbose mode prints a job report to screen, otherwise a dictionary Q
         is returned with the metadata of all jobs.
         ResetMissing will set the state of jobs that failed while online.
@@ -365,18 +366,21 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
             print_log(BatchID, missing[BatchID], 'stderr')
 
 
-def get_sql_queue(QFile, Filter={}):
+def get_sql_queue(QFile, Filter=''):
     conn = open_db()
+
+    filter_str = ''
+    if len(Filter):
+        filter_str = 'WHERE ' + Filter
+
     df = pd.read_sql_query('SELECT * FROM ' +
                            """(SELECT j.*,
                                       b.name,
                                       b.organism,
                                       b.data_type
                                FROM batch b INNER JOIN job j 
-                               ON j.BatchID = b.BatchID) """ +
-                           ('WHERE ' + ' AND '.join(
-                            parse_filter(Filter))
-                            if len(Filter) else ''), conn)
+                               ON j.BatchID = b.BatchID) """ + filter_str,
+                           conn)
     close_db(conn)
     return df.iloc[:, 1:].groupby('BatchID')\
         .apply(lambda df: df.sort_values('JobIndex')[['metadata', 'md5']]\
