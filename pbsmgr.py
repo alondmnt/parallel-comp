@@ -958,6 +958,8 @@ def init_db(conn):
         a batch contains multiple jobs/steps.
         a job may go for extra parallelization by launching spawns. """
 
+    print(f'initializing db at: {QFile}')
+
     # keeping the main searchable fields here
     conn.execute("""CREATE TABLE batch(
                     BatchID     INT     PRIMARY KEY,
@@ -993,13 +995,18 @@ def init_db(conn):
 
 def open_db(db_connection=None):
     """ returns a connection to SQL DB whether you provide an
-        existing one or not. """
-    if db_connection is None:
-        if not os.path.isfile(QFile):
-            init_db(QFile)
-        return sqlite3.connect(QFile)
-    else:
+        existing one or not. will setup the DB at the configed path
+        if it does not exist.  """
+    if db_connection is not None:
         return db_connection
+
+    if os.path.isfile(QFile):
+        return sqlite3.connect(QFile)
+
+    # DB does not exist
+    conn = sqlite3.connect(QFile)
+    init_db(conn)
+    return conn        
 
 
 def close_db(conn, db_connection=None):
