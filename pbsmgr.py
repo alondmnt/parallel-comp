@@ -466,7 +466,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
                                       JobIndex={JobIndex}"""))
     if len(job_query) != 1:
         close_db(conn)
-        raise Exception('job is not unique (%d)' % len(job_query))
+        raise Exception(f'job ({BatchID}, {JobIndex}) is not unique ({len(job_query)})')
     job_query = job_query[0]
     JobInfo = unpack_job(job_query)
 
@@ -519,7 +519,7 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries):
                                         BatchID={BatchID} AND
                                         JobIndex={JobIndex}"""))
             if len(md5) != 1:
-                raise Exception('job is not unique (%d)' % len(md5))
+                raise Exception(f'job ({BatchID, JobIndex}) is not unique ({len(md5)})')
             # here we're ensuring that JobInfo contains an updated version
             # of the data, that is consistent with the DB
             if md5[0][-1] != JobInfo['md5']:
@@ -667,6 +667,21 @@ def set_batch_field(BatchID, Fields={'state': 'init'},
         for job in JobList:
             set_job_field(b, job, Fields, Unless,
                           db_connection=conn)
+
+    close_db(conn)
+
+
+def make_job_unique(BatchID, JobIndex):
+    """ this shouldn't really happen unless something went seriously wrong.
+        will delete one entry and leave the other intact. """
+    conn = open_db()
+
+    job_query = list(conn.execute(f"""SELECT idx FROM job WHERE 
+                                      BatchID={BatchID} AND 
+                                      JobIndex={JobIndex}"""))
+    for job in job_query[:-1]:
+        conn.execute(f"""DELETE FROM job WHERE
+                         idx={job[0]}""")
 
     close_db(conn)
 
