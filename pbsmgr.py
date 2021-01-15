@@ -880,38 +880,6 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
     return JobInfo
 
 
-def spawn_resubmit(BatchID, JobIndex):
-    """ submit missing spawns. """
-    JobInfo = get_job_info(BatchID, JobIndex)
-    if JobInfo['state'] != 'spawn':
-        return
-
-    for i in range(len(JobInfo['spawn_id']), JobInfo['spawn_count']):
-        # time.sleep(1)
-        submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
-
-
-def spawn_fix_ghosts(BatchID, JobIndex):
-    """ run this after spawn_resubmit fails when NO SPAWNS ARE RUNNING to
-        remove spawns still existing (that failed) from the 
-        `PBS_ID` and `spawn_id` lists, and resubmit.
-        this is the spawn-eqeuivalent of resetting missing jobs. """
-    JobInfo = get_job_info(BatchID, JobIndex, HoldFile=True)
-    if JobInfo['state'] != 'spawn':
-        return
-
-    print('{} ghosts in PBS_ID'.format(len(JobInfo['PBS_ID'])))
-    JobInfo['PBS_ID'] = []
-    JobInfo['hostname'] = []
-
-    print('{} ghosts in spawn_id'.format(len(JobInfo['spawn_id']) -
-                                         len(JobInfo['spawn_complete'])))
-    JobInfo['spawn_id'] = list(JobInfo['spawn_complete'])
-
-    update_job(JobInfo, Release=True)
-    spawn_resubmit(BatchID, JobIndex)
-
-
 def isiterable(p_object):
     try:
         iter(p_object)
