@@ -359,7 +359,8 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
     except:
         pass
 
-    if ReportMissing:
+    if ReportMissing and len(missing):
+        print('\nerror logs for missing jobs:\n')
         for BatchID in missing:
             print_log(BatchID, missing[BatchID], 'stderr')
 
@@ -539,7 +540,8 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=3):
             break
 
         except Exception as err:
-            print(f'update_job: try {t+1} failed')
+            print(f'update_job: try {t+1} failed with:\n{err}\n')
+            JobInfo['md5'] = md5[0][-1]  # revert to previous md5 to pass tests
             if t == tries - 1:
                 raise(err)
 
@@ -798,7 +800,7 @@ def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None):
     return spawn_query.to_dict(orient='list')  # return a dict
 
 
-def spawn_complete(JobInfo, db_connection=None):
+def spawn_complete(JobInfo, db_connection=None, tries=3):
     """ signal that one spawn has ended successfully. only update done by
         current job to JobInfo, unless all spawns completed. """
 
