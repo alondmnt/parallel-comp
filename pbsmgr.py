@@ -34,7 +34,7 @@ LogDir = JobDir + '{BatchID}/logs/{submit_id}' + PBS_suffix
 LogOut = LogDir + '.OU'  # template
 LogErr = LogDir + '.ER'
 PBS_queue = 'tamir-nano4'
-WriteTries = 5
+WriteTries = 20
 
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on cluster
@@ -458,15 +458,20 @@ def get_batch_info(BatchID, db_connection=None):
 
 
 def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
-                 db_connection=None):
+                 db_connection=None, enforce_unique_job=True):
     """ HoldFile is ignored but kept for backward compatibility. """
     conn = open_db(db_connection)
     job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
                                       BatchID={BatchID} AND
                                       JobIndex={JobIndex}"""))
     if len(job_query) != 1:
-        close_db(conn)
-        raise Exception(f'job ({BatchID}, {JobIndex}) is not unique ({len(job_query)})')
+        if enforce_unique_job:
+            warnings.warn(f'job ({BatchID, JobIndex}) is not unique ({len(job_query)}). running make_job_unique()')
+            make_job_unique(BatchID, JobIndex, db_connection=conn)
+            job_query = job_query[-1:]
+        else:
+            close_db(conn)
+            raise Exception(f'job ({BatchID}, {JobIndex}) is not unique ({len(job_query)}). run make_job_unique()')
     job_query = job_query[0]
     JobInfo = unpack_job(job_query)
 
@@ -505,7 +510,8 @@ def get_time():
     return int(datetime.now().strftime('%Y%m%d%H%M%S'))
 
 
-def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries):
+def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
+               enforce_unique_job=True):
     """ Release is ignored but kept for backward compatibility. """
     BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
     PID = JobInfo['PBS_ID'] if 'PBS_ID' in JobInfo else 'unkown_PBS_ID'
@@ -519,7 +525,12 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries):
                                         BatchID={BatchID} AND
                                         JobIndex={JobIndex}"""))
             if len(md5) != 1:
-                raise Exception(f'job ({BatchID, JobIndex}) is not unique ({len(md5)})')
+                if enforce_unique_job:
+                    warnings.warn(f'job ({BatchID, JobIndex}) is not unique ({len(md5)}). running make_job_unique()')
+                    make_job_unique(BatchID, JobIndex, db_connection=conn)
+                    md5 = md5[-1:]
+                else:
+                    raise Exception(f'job ({BatchID, JobIndex}) is not unique ({len(md5)}). run make_job_unique()')
             # here we're ensuring that JobInfo contains an updated version
             # of the data, that is consistent with the DB
             if md5[0][-1] != JobInfo['md5']:
@@ -671,10 +682,10 @@ def set_batch_field(BatchID, Fields={'state': 'init'},
     close_db(conn)
 
 
-def make_job_unique(BatchID, JobIndex):
+def make_job_unique(BatchID, JobIndex, db_connection=None):
     """ this shouldn't really happen unless something went seriously wrong.
-        will delete one entry and leave the other intact. """
-    conn = open_db()
+        will leave one entry (most recent one) in the DB and delete all others. """
+    conn = open_db(db_connection)
 
     job_query = list(conn.execute(f"""SELECT idx FROM job WHERE 
                                       BatchID={BatchID} AND 
@@ -683,7 +694,7 @@ def make_job_unique(BatchID, JobIndex):
         conn.execute(f"""DELETE FROM job WHERE
                          idx={job[0]}""")
 
-    close_db(conn)
+    close_db(conn, db_connection)
 
 
 def remove_batch(BatchID):
@@ -709,7 +720,7 @@ def remove_batch(BatchID):
 
 def remove_batch_by_state(state):
     """ can provide an itreable of states to consider the union of possible
-        states. """
+        states. jobs in corresponding the batches will be removed from queue. """
     Q = get_queue(Verbose=False)
     for BatchID in Q.keys():
         if all([True if p['state'] in state else False
