@@ -378,7 +378,6 @@ def get_sql_queue(QFile, Filter=''):
     df = pd.read_sql_query('SELECT * FROM ' +
                            """(SELECT j.*,
                                       b.name,
-                                      b.organism,
                                       b.data_type
                                FROM batch b INNER JOIN job j 
                                ON j.BatchID = b.BatchID) """ + filter_str,
@@ -624,9 +623,9 @@ def add_job_to_queue(Jobs):
         if batch_index[BatchID] == 0:
             # init new batch
             conn.execute("""INSERT INTO batch
-                            VALUES (?,?,?,?)""",
+                            VALUES (?,?,?)""",
                             [BatchID, '/'.join(job['name']),
-                             job['organism'], job['data_type']])
+                             job['data_type']])
 
         job['JobIndex'] = batch_index[BatchID]
         batch_index[BatchID] += 1
@@ -1002,7 +1001,6 @@ def init_db(conn):
     conn.execute("""CREATE TABLE batch(
                     BatchID     INT     PRIMARY KEY,
                     name        TEXT    NOT NULL,
-                    organism    TEXT    NOT NULL,
                     data_type   TEXT    NOT NULL
                     );""")
 

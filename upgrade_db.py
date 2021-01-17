@@ -46,9 +46,9 @@ def populate_db(QFile=pbs.QFile):
                           job['priority'], metadata, job['md5']])
 
         conn.execute("""INSERT INTO batch
-                        VALUES (?,?,?,?)""",
+                        VALUES (?,?,?)""",
                      [batch_id, '/'.join(batch[0]['name']),
-                      batch[0]['organism'], batch[0]['data_type']])
+                      batch[0]['data_type']])
 
     conn.commit()
     conn.close()
