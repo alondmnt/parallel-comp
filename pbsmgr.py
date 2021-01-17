@@ -204,6 +204,8 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
             submit_id = submit_id_raw.replace(PBS_suffix, '')
         else:
             OutFile.write(job['script'] + '\n')
+            submit_id_raw = OutFile.name
+            submit_id = OutFile.name
 
         if not Spawn:
             job['state'] = 'submit'
