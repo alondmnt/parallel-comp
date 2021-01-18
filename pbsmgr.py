@@ -176,7 +176,8 @@ def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
     return SubCount
 
 
-def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
+def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
+                   OutFile=None):
     """ accepts either an integer or an iterable of integers as JobIndex. """
     ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
     OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
@@ -227,7 +228,8 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, OutFile=None):
             job['state'] = 'spawn'
             update_job(job, Release=True)
 
-        spawn_add_to_db(BatchID, JobIndex, submit_id, db_connection=conn)
+        spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
+                        db_connection=conn)
         close_db(conn)
 
 
@@ -559,7 +561,7 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
             break
 
         except Exception as err:
-            close_db(conn)
+            close_db(conn, db_connection)
             print(f'update_job: try {t+1} failed with:\n{err}\n')
             JobInfo['md5'] = md5[0][-1]  # revert to previous md5 to pass tests
             if t == tries - 1:
@@ -792,18 +794,24 @@ def spawn_submit(JobInfo, N):
     return get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], SetID=True)
 
 
-def spawn_add_to_db(BatchID, JobIndex, PBS_ID, db_connection=None,
-                    tries=WriteTries):
+def spawn_add_to_db(BatchID, JobIndex, PBS_ID, SpawnCount=None,
+                    db_connection=None, tries=WriteTries):
     for t in range(tries):
         try:
             conn = open_db(db_connection)
+
             # auto-numbering of spawns
-            # TODO: if we ever delete some row, auto-numbering will fail and may
-            #       generate already existing IDs
-            SpawnID = len(list(
-                    conn.execute(f"""SELECT SpawnID FROM spawn
-                                     WHERE BatchID={BatchID} AND
-                                           JobIndex={JobIndex}""")))
+            SpawnIDs = spawn_get_info(BatchID, JobIndex,
+                                      db_connection=conn)['SpawnID']
+            if SpawnCount is None:
+                SpawnID = len(SpawnIDs)
+            else:  # total number of spawns is known
+                SpawnID = [i for i in range(SpawnCount) if i not in SpawnIDs]
+                if len(SpawnID) == 0:
+                    raise Exception(f'nothing to submit for SpawnCount={SpawnCount}')
+                SpawnID = SpawnID[0]
+
+            print(f'new spawn with id={SpawnID}')
             conn.execute("""INSERT INTO spawn(BatchID, JobIndex, SpawnID, PBS_ID,
                                               spawn_state, stdout, stderr)
                             VALUES (?,?,?,?,?,?,?)""",
@@ -814,24 +822,29 @@ def spawn_add_to_db(BatchID, JobIndex, PBS_ID, db_connection=None,
             break
 
         except Exception as err:
-            close_db(conn)
+            close_db(conn, db_connection)
             print(f'spawn_add_to_db: try {t+1} failed with:\n{err}\n')
             if t == tries - 1:
                 raise(err)
 
 
-def spawn_del_from_db(BatchID, JobIndex, db_connection=None, tries=WriteTries):
+def spawn_del_from_db(BatchID, JobIndex, db_connection=None, tries=WriteTries,
+                      Filter=''):
+    filter_str = ''
+    if len(Filter):
+        filter_str = ' AND ' + Filter
+
     for t in range(tries):
         try:
             conn = open_db(db_connection)
             conn.execute("""DELETE FROM spawn WHERE
-                            BatchID=? AND JobIndex=?""",
+                            BatchID=? AND JobIndex=?""" + filter_str,
                             [BatchID, JobIndex])
             close_db(conn, db_connection)
             break
 
         except Exception as err:
-            close_db(conn)
+            close_db(conn, db_connection)
             print(f'spawn_del_from_db: try {t+1} failed with:\n{err}\n')
             if t == tries - 1:
                 raise(err)
@@ -887,28 +900,55 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
             # second, get all states of spawns
             spawn_dict = spawn_get_info(JobInfo['BatchID'], JobInfo['JobIndex'],
                                         db_connection=conn)
-            if (pd.Series(spawn_dict['spawn_state']) == 'complete').all():
-                # update parent job, remove spawns from DB
-                JobInfo.update(spawn_dict)
-                JobInfo['state'] = 'run'
-                update_job(JobInfo, db_connection=conn)
-                JobInfo['state'] = 'complete'
-                # signal calling function that we're done, but defer broadcasting
-                # to all other jobs yet
+            if not (pd.Series(spawn_dict['spawn_state']) == 'complete').all():
+                close_db(conn, db_connection)
+                # we run the following just in case some job failed
+                # I think this shouldn't cause any infinite loop
+                spawn_resubmit(JobInfo['BatchID'], JobInfo['JobIndex'])
+                break
 
-                spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'],
-                                  db_connection=conn)
+            # all spawn jobs completed
+            # update parent job, remove spawns from DB
+            JobInfo.update(spawn_dict)
+            JobInfo['state'] = 'run'
+            update_job(JobInfo, db_connection=conn)
+            JobInfo['state'] = 'complete'
+            # signal calling function that we're done, but defer broadcasting
+            # to all other jobs yet
 
+            spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'],
+                              db_connection=conn)
             close_db(conn, db_connection)
             break
 
         except Exception as err:
-            close_db(conn)
+            close_db(conn, db_connection)
             print(f'spawn_complete: try {t+1} failed with:\n{err}\n')
             if t == tries - 1:
                 raise(err)
 
     return JobInfo
+
+
+def spawn_resubmit(BatchID, JobIndex, SpawnCount=None):
+    """ resubmits spawns that were left in 'submit' state, if they failed
+        for some reason. the function will check against PBS queue for queued
+        spawns and will not submit them again.
+        SpawnCount is optional (usually inferred), and sets the total desired number
+        of spawns. """
+    conn = open_db()
+    if SpawnCount is None:
+        SpawnCount = len(spawn_get_info(BatchID, JobIndex,
+                                        db_connection=conn)['SpawnID'])
+
+    Q_server = str(tuple(get_pbs_queue())).replace(',)', ')')
+    condition = f'spawn_state=="submit" AND PBS_ID NOT IN {Q_server}'
+    spawn_del_from_db(BatchID, JobIndex, Filter=condition, db_connection=conn)
+    close_db(conn)
+
+    n_miss = SpawnCount - len(spawn_get_info(BatchID, JobIndex)['SpawnID'])
+    for _ in range(n_miss):
+        submit_one_job(BatchID, JobIndex, Spawn=True, SpawnCount=SpawnCount)
 
 
 def isiterable(p_object):
