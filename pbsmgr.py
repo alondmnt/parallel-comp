@@ -801,8 +801,9 @@ def spawn_add_to_db(BatchID, JobIndex, PBS_ID, SpawnCount=None,
             conn = open_db(db_connection)
 
             # auto-numbering of spawns
-            SpawnIDs = spawn_get_info(BatchID, JobIndex,
-                                      db_connection=conn)['SpawnID']
+            SpawnIDs = pd.read_sql(f"""SELECT SpawnID FROM spawn
+                                       WHERE BatchID={BatchID} AND
+                                       JobIndex={JobIndex}""", conn)['SpawnID']
             if SpawnCount is None:
                 SpawnID = len(SpawnIDs)
             else:  # total number of spawns is known
