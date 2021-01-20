@@ -34,17 +34,15 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
         ResetMissing will set the state of jobs that failed while online.
         Display is an iterable of states that desired for display (other
         states will not be reported in Verbose mode).
-        additional keyword arguments are used to filter batches by their
-        fields.
+        Filter accepts SQLite conditions as a string.
 
         Example:
             get_queue(Display={'complete'})
             will display only completed jobs.
 
-            get_queue(name='awesome')
-            will display only the batch named awesome.
-            for a differences Display filtering and Filter see the README,
-            and look for [skip_flag] in the code. """
+            get_queue(Filter='name LIKE "%most-excellent%"')
+            will display only that their name contains the phrase 'most-excellent'.
+            for a differences Display filtering and Filter see the README. """
 
     # reads from global job queue file
     Q = get_sql_queue(QFile, Filter)
@@ -268,6 +266,8 @@ def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False,
 
 
 def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
+    """ despite its name, this function accepts also an iterable with
+        multiple BatchIDs. """
     for batch in utils.make_iter(BatchID):
         BatchInfo = dal.get_batch_info(batch)
         job_priority = max([0] + [j['priority'] for j in BatchInfo
@@ -286,7 +286,8 @@ def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
 
 def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
                    OutFile=None):
-    """ accepts either an integer or an iterable of integers as JobIndex. """
+    """ despite its name, this function accepts either an integer
+        or an iterable of integers as JobIndex. """
     ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
     OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
     if not os.path.isdir(ErrDir):
@@ -344,7 +345,8 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
 def spawn_submit(JobInfo, N):
     """ run the selected job multiple times in parallel. job needs to handle
         'spawn' state for correct logic: i.e., only last job to complete
-        updates additional fields in JobInfo and sets it to 'complete'. """
+        updates additional fields in JobInfo and sets it to 'complete'.
+        this state-logic is handled by calling spawn_complete(). """
     print(f'submitting {N} spawn jobs')
 
     spawn.spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
