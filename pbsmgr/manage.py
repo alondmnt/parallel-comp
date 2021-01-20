@@ -19,10 +19,9 @@ import warnings
 import pandas as pd
 
 from .config import QFile, JobDir, PBS_suffix, PBS_queue, DefResource, \
-        LogOut, LogErr, PBS_ID, running_on_cluster
+        WriteTries, LogOut, LogErr, PBS_ID, running_on_cluster
 from . import utils
 from . import dal
-from . import spawn
 
 
 ### QUEUE FUNCTIONS ###
@@ -337,7 +336,7 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
             job['state'] = 'spawn'
             dal.update_job(job, Release=True)
 
-        spawn.spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
+        dal.spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
                               db_connection=conn)
         dal.close_db(conn)
 
@@ -349,10 +348,10 @@ def spawn_submit(JobInfo, N):
         this state-logic is handled by calling spawn_complete(). """
     print(f'submitting {N} spawn jobs')
 
-    spawn.spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
+    dal.spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
 
     # adding self
-    spawn.spawn_add_to_db(JobInfo['BatchID'], JobInfo['JobIndex'], PBS_ID)
+    dal.spawn_add_to_db(JobInfo['BatchID'], JobInfo['JobIndex'], PBS_ID)
 
     for _ in range(N):
         submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
@@ -374,7 +373,7 @@ def spawn_resubmit(BatchID, JobIndex, SpawnCount=None):
 
     Q_server = str(tuple(get_pbs_queue())).replace(',)', ')')
     condition = f'spawn_state=="submit" AND PBS_ID NOT IN {Q_server}'
-    spawn.spawn_del_from_db(BatchID, JobIndex, Filter=condition, db_connection=conn)
+    dal.spawn_del_from_db(BatchID, JobIndex, Filter=condition, db_connection=conn)
     dal.close_db(conn)
 
     n_miss = SpawnCount - len(dal.spawn_get_info(BatchID, JobIndex)['SpawnID'])
@@ -479,3 +478,61 @@ def set_batch_field(BatchID, Fields={'state': 'init'},
                           db_connection=conn)
 
     dal.close_db(conn)
+
+
+def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
+    """ signal that one spawn has ended successfully. only update done by
+        current job to JobInfo, unless all spawns completed. """
+
+    for t in range(tries):
+        try:
+            conn = dal.open_db(db_connection)
+            JobInfo = dal.get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'],
+                                       db_connection=conn)
+            if JobInfo['state'] != 'spawn':
+                # must not leave function with an ambiguous state in JobInfo
+                # e.g., if job has been re-submitted by some one/job
+                # (unknown logic follows)
+                dal.close_db(conn)
+                raise Exception(f"""unknown state "{JobInfo['state']}" encountered for spawned
+                                    job ({JobInfo['BatchID']}, {JobInfo['JobIndex']})""")
+
+            # first, set current spawn state to complete
+            # (use same db_connection to make sure that no other job sees that I am done)
+            conn.execute("""UPDATE spawn
+                            SET spawn_state='complete' WHERE
+                            BatchID=? AND JobIndex=? AND PBS_ID=?""",
+                            [JobInfo['BatchID'], JobInfo['JobIndex'],
+                             JobInfo['PBS_ID'][0]])
+
+            # second, get all states of spawns
+            spawn_dict = dal.spawn_get_info(JobInfo['BatchID'], JobInfo['JobIndex'],
+                                            db_connection=conn)
+            if not (pd.Series(spawn_dict['spawn_state']) == 'complete').all():
+                dal.close_db(conn, db_connection)
+                # we run the following just in case some job failed
+                # I think this shouldn't cause any infinite loop
+                spawn_resubmit(JobInfo['BatchID'], JobInfo['JobIndex'])
+                break
+
+            # all spawn jobs completed
+            # update parent job, remove spawns from DB
+            JobInfo.update(spawn_dict)
+            JobInfo['state'] = 'run'
+            dal.update_job(JobInfo, db_connection=conn)
+            JobInfo['state'] = 'complete'
+            # signal calling function that we're done, but defer broadcasting
+            # to all other jobs yet
+
+            dal.spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'],
+                              db_connection=conn)
+            dal.close_db(conn, db_connection)
+            break
+
+        except Exception as err:
+            dal.close_db(conn, db_connection)
+            print(f'spawn_complete: try {t+1} failed with:\n{err}\n')
+            if t == tries - 1:
+                raise(err)
+
+    return JobInfo

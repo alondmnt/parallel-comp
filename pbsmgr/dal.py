@@ -19,7 +19,7 @@ import zlib
 
 import pandas as pd
 
-from .config import QFile, WriteTries, PBS_ID, hostname
+from .config import QFile, WriteTries, LogOut, LogErr, PBS_ID, hostname
 from . import utils
 
 
@@ -262,6 +262,63 @@ def make_job_unique(BatchID, JobIndex, db_connection=None):
                          idx={job[0]}""")
 
     close_db(conn, db_connection)
+
+
+def spawn_add_to_db(BatchID, JobIndex, PBS_ID, SpawnCount=None,
+                    db_connection=None, tries=WriteTries):
+    for t in range(tries):
+        try:
+            conn = open_db(db_connection)
+
+            # auto-numbering of spawns
+            SpawnIDs = pd.read_sql(f"""SELECT SpawnID FROM spawn
+                                       WHERE BatchID={BatchID} AND
+                                       JobIndex={JobIndex}""", conn)['SpawnID']
+            if SpawnCount is None:
+                SpawnID = len(SpawnIDs)
+            else:  # total number of spawns is known
+                SpawnID = [i for i in range(SpawnCount) if i not in SpawnIDs]
+                if len(SpawnID) == 0:
+                    raise Exception(f'nothing to submit for SpawnCount={SpawnCount}')
+                SpawnID = SpawnID[0]
+
+            print(f'new spawn with id={SpawnID}')
+            conn.execute("""INSERT INTO spawn(BatchID, JobIndex, SpawnID, PBS_ID,
+                                              spawn_state, stdout, stderr)
+                            VALUES (?,?,?,?,?,?,?)""",
+                         [BatchID, JobIndex, SpawnID, PBS_ID,
+                          'submit', LogOut.format(BatchID=BatchID, submit_id=PBS_ID),
+                          LogErr.format(BatchID=BatchID, submit_id=PBS_ID)])
+            close_db(conn, db_connection)
+            break
+
+        except Exception as err:
+            close_db(conn, db_connection)
+            print(f'spawn_add_to_db: try {t+1} failed with:\n{err}\n')
+            if t == tries - 1:
+                raise(err)
+
+
+def spawn_del_from_db(BatchID, JobIndex, db_connection=None, tries=WriteTries,
+                      Filter=''):
+    filter_str = ''
+    if len(Filter):
+        filter_str = ' AND ' + Filter
+
+    for t in range(tries):
+        try:
+            conn = open_db(db_connection)
+            conn.execute("""DELETE FROM spawn WHERE
+                            BatchID=? AND JobIndex=?""" + filter_str,
+                            [BatchID, JobIndex])
+            close_db(conn, db_connection)
+            break
+
+        except Exception as err:
+            close_db(conn, db_connection)
+            print(f'spawn_del_from_db: try {t+1} failed with:\n{err}\n')
+            if t == tries - 1:
+                raise(err)
 
 
 def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1, Lines=None, RegEx=None):
