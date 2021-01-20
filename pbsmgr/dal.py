@@ -12,6 +12,7 @@ import hashlib
 import os
 import pickle
 pickle.HIGHEST_PROTOCOL = 2  # for compatibility with python2
+import re
 import sqlite3
 import warnings
 import zlib
@@ -263,16 +264,16 @@ def make_job_unique(BatchID, JobIndex, db_connection=None):
     close_db(conn, db_connection)
 
 
-def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1):
+def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1, Lines=None, RegEx=None):
     """ print job logs. """
     if utils.isiterable(BatchID):
-        [print_log(j, JobIndex, LogKey, LogIndex) for j in BatchID]
+        [print_log(j, JobIndex, LogKey, LogIndex, Lines, RegEx) for j in BatchID]
         return
     if utils.isiterable(JobIndex):
-        [print_log(BatchID, p, LogKey, LogIndex) for p in JobIndex]
+        [print_log(BatchID, p, LogKey, LogIndex, Lines, RegEx) for p in JobIndex]
         return
     if utils.isiterable(LogIndex):
-        [print_log(BatchID, JobIndex, LogKey, i) for i in LogIndex]
+        [print_log(BatchID, JobIndex, LogKey, i, Lines, RegEx) for i in LogIndex]
         return
 
     JobInfo = get_job_info(BatchID, JobIndex)
@@ -294,5 +295,11 @@ def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1):
     print('\n\n[[[{} log for {}/{}/job_{}:]]]\n'.format(LogKey, BatchID,
           '/'.join(JobInfo['name']), JobIndex))
     with open(LogFile, 'r') as fid:
-        for line in fid:
+        if type(RegEx) is str:
+            RegEx = re.compile(RegEx)
+        for i, line in enumerate(fid):
+            if Lines is not None and i not in Lines:
+                continue
+            if RegEx is not None and RegEx.search(line) is None:
+                continue
             print(line[:-1])
