@@ -426,14 +426,6 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
     dal.update_job(JobInfo, Release=True)
 
 
-def boost_batch_priority(BatchID, Booster=100):
-    for batch in utils.make_iter(BatchID):
-        BatchInfo = dal.get_batch_info(batch)
-        for JobInfo in BatchInfo:
-            JobInfo['priority'] += Booster
-            dal.update_job(JobInfo)
-
-
 ### SET JOB STATES AND SUCH ###
 
 def set_complete(BatchID=None, JobIndex=None, JobInfo=None):
@@ -481,8 +473,11 @@ def set_batch_field(BatchID, Fields={'state': 'init'},
 
 
 def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
-    """ signal that one spawn has ended successfully. only update done by
-        current job to JobInfo, unless all spawns completed. """
+    """ signal that one spawn has ended successfully by updating the spawn
+        table. once all spawns completed, returns a 'complete' state to the
+        calling function (which may then proceed to complete the parent job). """
+    # ideally placed in dal.py, it is currently here to avoid a dependency
+    # loop (dal-->manage-->dal due to the call to spawn_resubmit() below).
 
     for t in range(tries):
         try:
@@ -536,3 +531,11 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
                 raise(err)
 
     return JobInfo
+
+
+def boost_batch_priority(BatchID, Booster=100):
+    for batch in utils.make_iter(BatchID):
+        BatchInfo = dal.get_batch_info(batch)
+        for JobInfo in BatchInfo:
+            JobInfo['priority'] += Booster
+            dal.update_job(JobInfo)
