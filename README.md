@@ -1,6 +1,6 @@
-# pbsmgr
+# PBS manager
 
-`pbsmgr` is a job management package for PBS (portable batch system) and can be easily adjusted to similar HPC cluster systems (such as SGE, Torque, Slurm, condor, etc.). it is used in conjnuction with the cluster's batch manager to submit and monitor jobs. it is de-centralized (does not require a dedicated node running as a server), based on SQLite, controls the execution flow of inter-dependent jobs, handle job errors, and manipulates job parameters at scale.
+`pbsmgr` is a job management package for PBS (portable batch system) and can be easily adjusted to similar HPC cluster systems (such as SGE, Torque, Slurm, condor, etc.). it is used in conjunction with the cluster's batch manager to submit and monitor jobs. it is de-centralized (does not require a dedicated node running as a server), based on SQLite, controls the execution flow of inter-dependent jobs, handle job errors, and manipulates job parameters at scale.
 
 see also the Jupyter notebook [example.ipynb](example.ipynb).
 
