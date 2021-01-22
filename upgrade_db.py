@@ -15,7 +15,7 @@ import sqlite3
 import pbsmgr as pbs
 
 
-def upgrade_db(db_path=pbs.QFile):
+def run(db_path=pbs.QFile):
     with connect(db_path, exists_OK=False) as conn:
         pbs.init_db(conn)
     populate_db(db_path)
@@ -33,7 +33,7 @@ def populate_db(QFile=pbs.QFile):
     """ add all currently queued jobs to new DB. """
 
     conn = connect(QFile, exists_OK=True)
-    Q = get_queue(QFile=QFile)
+    Q = get_queue(QFile='.'.join(QFile.split('.')[:-1] + ['pkl']))
 
     for batch_id, batch in Q.items():
         for job in batch:

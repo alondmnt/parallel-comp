@@ -84,7 +84,7 @@ def init_db(conn):
                     PBS_ID      TEXT    NOT NULL,
                     stdout      TEXT    NOT NULL,
                     stderr      TEXT    NOT NULL,
-                    spawn_state       TEXT    NOT NULL
+                    spawn_state TEXT    NOT NULL
                     );""")
 
 
