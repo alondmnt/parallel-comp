@@ -16,7 +16,7 @@ import pickle
 import shutil
 import time
 
-from .config import JobTemplate, JobDir, QFile
+from .config import JobTemplate, JobDir, QFile, TempFiles
 from . import dal
 from . import manage
 from . import utils
@@ -160,7 +160,7 @@ def clean_temp_folders(batch_list=None):
     return rmv_list
 
 
-def clean_temp_files(dir_str=['*.genes.*', '*.len*.npz'], batch_list=None):
+def clean_temp_files(dir_str=TempFiles, batch_list=None):
     """ clean files based on [dir_str]. e.g., '*.genes'. """
     if batch_list is None:
         batch_list = manage.get_queue(Verbose=False).keys()

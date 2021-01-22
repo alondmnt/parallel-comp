@@ -11,12 +11,13 @@ Created on Wed Mar 18 22:45:50 2015
 import os
 
 ServerHost = 'tau.ac.il'
-QFile = '/tamir1/dalon/RP/Consistency/jobs/job_queue.db'  # '../jobs/job_queue.pkl'
+QFile = '/tamir1/dalon/RP/Consistency/jobs/job_queue.db'
 JobDir = '../jobs/'
 PBS_suffix = '.power8.tau.ac.il'
 LogDir = JobDir + '{BatchID}/logs/{submit_id}' + PBS_suffix
 LogOut = LogDir + '.OU'  # template
 LogErr = LogDir + '.ER'
+TempFiles = ['*.genes.*', '*.len*.npz']
 PBS_queue = 'tamir-nano4'
 WriteTries = 20
 
