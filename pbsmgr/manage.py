@@ -428,12 +428,15 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
 
 ### SET JOB STATES AND SUCH ###
 
-def set_complete(BatchID=None, JobIndex=None, JobInfo=None):
+def set_complete(BatchID=None, JobIndex=None, JobInfo=None, Submit=False):
     if JobInfo is None:
         JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True, ignore_spawn=True)
     JobInfo['qstat'] = get_qstat()
     JobInfo['state'] = 'complete'
     dal.update_job(JobInfo, Release=True)
+
+    if Submit:
+        submit_jobs()
 
 
 def set_job_field(BatchID, JobIndex, Fields={'state': 'init'},
