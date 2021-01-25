@@ -530,6 +530,7 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
         except Exception as err:
             dal.close_db(conn, db_connection)
             print(f'spawn_complete: try {t+1} failed with:\n{err}\n')
+            time.sleep(1)
             if t == tries - 1:
                 raise(err)
 

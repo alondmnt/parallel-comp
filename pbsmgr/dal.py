@@ -14,6 +14,7 @@ import pickle
 pickle.HIGHEST_PROTOCOL = 2  # for compatibility with python2
 import re
 import sqlite3
+import time
 import warnings
 import zlib
 
@@ -154,6 +155,8 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
         return JobInfo
 
     # SetID==True
+    if PBS_ID != JobInfo['submit_id']:
+        raise Exception(f"current PBS_ID ({PBS_ID}) != submit_id ({JobInfo['submit_id']})")
     JobInfo['PBS_ID'] = PBS_ID
     JobInfo['hostname'] = hostname
     JobInfo['state'] = 'run'
@@ -190,6 +193,7 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
     """ Release is ignored but kept for backward compatibility. """
     BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
     PID = JobInfo['PBS_ID'] if 'PBS_ID' in JobInfo else 'unkown_PBS_ID'
+    md5_init = JobInfo['md5']
 
     for t in range(tries):
         try:
@@ -209,7 +213,11 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
             # here we're ensuring that JobInfo contains an updated version
             # of the data, that is consistent with the DB
             if md5[0][-1] != JobInfo['md5']:
-                other_id = unpack_job(md5[0])['PBS_ID']
+                other_id = unpack_job(md5[0])
+                if 'PBS_ID' in other_id:
+                    other_id = other_id['PBS_ID']
+                else:
+                    other_id = 'unknown'
                 raise Exception(f'job ({BatchID}, {JobIndex}, {PID}) was overwritten by another process ({other_id})')
 
             metadata = pack_job(JobInfo)
@@ -235,7 +243,8 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
         except Exception as err:
             close_db(conn, db_connection)
             print(f'update_job: try {t+1} failed with:\n{err}\n')
-            JobInfo['md5'] = md5[0][-1]  # revert to previous md5 to pass tests
+            JobInfo['md5'] = md5_init  # revert to previous md5 to pass tests
+            time.sleep(1)
             if t == tries - 1:
                 raise(err)
 
@@ -295,6 +304,7 @@ def spawn_add_to_db(BatchID, JobIndex, PBS_ID, SpawnCount=None,
         except Exception as err:
             close_db(conn, db_connection)
             print(f'spawn_add_to_db: try {t+1} failed with:\n{err}\n')
+            time.sleep(1)
             if t == tries - 1:
                 raise(err)
 
@@ -317,6 +327,7 @@ def spawn_del_from_db(BatchID, JobIndex, db_connection=None, tries=WriteTries,
         except Exception as err:
             close_db(conn, db_connection)
             print(f'spawn_del_from_db: try {t+1} failed with:\n{err}\n')
+            time.sleep(1)
             if t == tries - 1:
                 raise(err)
 
