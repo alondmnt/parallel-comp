@@ -10,6 +10,7 @@ Created on Wed Mar 18 22:45:50 2015
 """
 import os
 
+LocalRun = True  # instead of submitting to cluster, run on local machine
 ServerHost = 'tau.ac.il'
 QFile = '/tamir1/dalon/RP/Consistency/jobs/job_queue.db'
 JobDir = '../jobs/'
@@ -36,6 +37,8 @@ JobTemplate =   {'BatchID': None,
 
 # automatically-set variables
 
+if LocalRun:
+    os.environ['PBS_ID'] = 'pbsmgr'
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on cluster
     PBS_ID_raw = os.environ['PBS_JOBID']

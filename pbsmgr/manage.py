@@ -18,7 +18,7 @@ import warnings
 
 import pandas as pd
 
-from .config import QFile, JobDir, PBS_suffix, PBS_queue, DefResource, \
+from .config import QFile, JobDir, LocalRun, PBS_suffix, PBS_queue, DefResource, \
         WriteTries, LogOut, LogErr, PBS_ID, running_on_cluster
 from . import utils
 from . import dal
@@ -284,7 +284,7 @@ def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
 
 
 def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
-                   OutFile=None):
+                   OutFile=None, LocalSub={}):
     """ despite its name, this function accepts either an integer
         or an iterable of integers as JobIndex. """
     ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
@@ -308,7 +308,13 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
                            for k, v in sorted(this_res.items())])]
         if 'queue' in job:
             this_sub[2] = job['queue']
-        if OutFile is None:
+
+        # where to submit to
+        if LocalRun:
+            time.sleep(1)  # ensure that the assigned id is unique (and same as subtime)
+            submit_id = utils.get_time()
+            LocalSub[submit_id] = job
+        elif OutFile is None:
             submit_id_raw = subprocess.check_output(this_sub + [job['script']]).decode('UTF-8').replace('\n', '')
             submit_id = submit_id_raw.replace(PBS_suffix, '')
         else:
@@ -337,15 +343,9 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
             dal.update_job(job, Release=True)
 
         dal.spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
-                              db_connection=conn)
-        dal.close_db(conn)
-
-
-def spawn_submit(JobInfo, N):
-    """ run the selected job multiple times in parallel. job needs to handle
-        'spawn' state for correct logic: i.e., only last job to complete
-        updates additional fields in JobInfo and sets it to 'complete'.
-        this state-logic is handled by calling spawn_complete(). """
+                            db_connection=conn)
+b_connection=conn)
+"""
     print(f'submitting {N} spawn jobs')
 
     dal.spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
