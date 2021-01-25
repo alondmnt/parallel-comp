@@ -344,8 +344,14 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
 
         dal.spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
                             db_connection=conn)
-b_connection=conn)
-"""
+        dal.close_db(conn)
+
+
+def spawn_submit(JobInfo, N):
+    """ run the selected job multiple times in parallel. job needs to handle
+        'spawn' state for correct logic: i.e., only last job to complete
+        updates additional fields in JobInfo and sets it to 'complete'.
+        this state-logic is handled by calling spawn_complete(). """
     print(f'submitting {N} spawn jobs')
 
     dal.spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
