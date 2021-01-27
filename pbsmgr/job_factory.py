@@ -33,7 +33,10 @@ def get_job_template(SetID=False):
 def generate_script(JobInfo, Template=None):
     """ will generate a script based on a template while replacing all fields
         appearing in the template (within curly brackets {fieldname}) according
-        to the value of the field in JobInfo. """
+        to the value of the field in JobInfo.
+
+        example:
+        JobInfo = generate_script(JobInfo) """
     global JobDir
     if Template is None:
         Template = JobInfo['script']
@@ -59,7 +62,11 @@ def generate_script(JobInfo, Template=None):
 
 def generate_data(JobInfo, Data):
     """ will save data and update metadata with the file location.
-        standard file naming / dump. """
+        standard file naming / dump.
+
+        example:
+        vec = np.ones(10**6)
+        JobInfo = generate_data(JobInfo, vec) """
     JobInfo['data'] = '{}/{}/data_{}.pkl'.format(JobDir, JobInfo['BatchID'],
                                                  JobInfo['JobIndex'])
     if not os.path.isdir(os.path.dirname(JobInfo['data'])):
@@ -69,7 +76,7 @@ def generate_data(JobInfo, Data):
     return JobInfo
 
 
-def add_batch_to_queue(BatchID, Jobs):
+def add_batch_to_queue(BatchID, Jobs, set_index=False, build_script=False):
     """ provide a list of job info dicts, will replace any existing
         batch. unlike add_job_to_queue it ensures that BatchID doe not
         exist in queue, and that all given jobs are from the same batch. """
@@ -81,12 +88,12 @@ def add_batch_to_queue(BatchID, Jobs):
     if len(dal.get_job_indices(BatchID)) > 0:
         raise Exception(f'BatchID={BatchID} already exists')
 
-    add_job_to_queue(Jobs)
+    add_job_to_queue(Jobs, set_index=set_index, build_script=build_script)
     print('\nbatch {} (size {:,d}) added to queue ({})'.format(BatchID,
           len(Jobs), QFile))
 
 
-def add_job_to_queue(Jobs):
+def add_job_to_queue(Jobs, set_index=False, build_script=False):
     """ job info or a list of job info dicts supported.
         automatically sets the JobIndex id in each JobInfo,
         and saves the metdata. """
@@ -96,7 +103,6 @@ def add_job_to_queue(Jobs):
     for job in utils.make_iter(Jobs):
         BatchID = job['BatchID']
 
-        # setting JobIndex automatically
         if BatchID not in batch_index:
             batch_index[BatchID] = len(dal.get_job_indices(BatchID))
         if batch_index[BatchID] == 0:
@@ -106,7 +112,10 @@ def add_job_to_queue(Jobs):
                             [BatchID, '/'.join(job['name']),
                              job['data_type']])
 
-        job['JobIndex'] = batch_index[BatchID]
+        if set_index:
+            job['JobIndex'] = batch_index[BatchID]
+        if build_script:
+            job = generate_script(job)
         batch_index[BatchID] += 1
         metadata = dal.pack_job(job)
         conn.execute("""INSERT INTO job(JobIndex, BatchID, state,
