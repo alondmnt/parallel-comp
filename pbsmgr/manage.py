@@ -22,6 +22,7 @@ from .config import QFile, JobDir, LocalRun, PBS_suffix, PBS_queue, DefResource,
         WriteTries, LogOut, LogErr, PBS_ID, running_on_cluster
 from . import utils
 from . import dal
+from . import local
 
 
 ### QUEUE FUNCTIONS ###
@@ -183,14 +184,14 @@ def get_pbs_queue():
 
 ### SUBMIT FUNCTIONS ###
 
-def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False,
+def submit_jobs(MaxJobs=None, MinPrior=0, LocalRun=LocalRun, OutFile=None, ForceSubmit=False,
                 Filter=''):
     """ submits all next available jobs according to job priorities.
         MaxJobs is loaded from [JobDir]/maxjobs unless specified (default=1000).
         ForceSubmit ignores another process currently submitting jobs (or an
         abandoned lock file).
         Filter are SQL query conditions that get_queue() accepts. """
-    if not running_on_cluster:
+    if not running_on_cluster and not LocalRun:
         print('submit_jobs: not running on cluster.')
         return
 
@@ -236,6 +237,13 @@ def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False,
     else:
         isGlobalPriority = False
 
+    if LocalRun:
+        if PBS_ID != 'pbsmgr':
+            print('cannot submit from a subprocess.')
+            return
+        local_sub = local.get_executor()
+    else:
+        local_sub = None
     if OutFile is not None:
         out_file = open(OutFile, 'w')
         out_file.write('#!/bin/bash\n')
@@ -252,7 +260,7 @@ def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False,
             continue
         if len(Q[j]) == 0:
             continue
-        count = submit_one_batch(j, count, MaxJobs, OutFile=out_file)
+        count = submit_one_batch(j, count, MaxJobs, OutFile=out_file, LocalSub=local_sub)
 
     flag_file.close()
     if OutFile is not None:
@@ -264,7 +272,7 @@ def submit_jobs(MaxJobs=None, MinPrior=0, OutFile=None, ForceSubmit=False,
           count - count_in_queue))
 
 
-def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
+def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None, LocalSub=None):
     """ despite its name, this function accepts also an iterable with
         multiple BatchIDs. """
     for batch in utils.make_iter(BatchID):
@@ -276,7 +284,7 @@ def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
             if job['priority'] < job_priority:
                 continue
             if job['state'] == 'init':
-                submit_one_job(batch, job['JobIndex'], OutFile=OutFile)
+                submit_one_job(batch, job['JobIndex'], OutFile=OutFile, LocalSub=LocalSub)
                 SubCount += 1
                 if SubCount >= MaxJobs:
                     break
@@ -284,7 +292,7 @@ def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None):
 
 
 def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
-                   OutFile=None, LocalSub={}):
+                   OutFile=None, LocalSub=None):
     """ despite its name, this function accepts either an integer
         or an iterable of integers as JobIndex. """
     ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
@@ -310,10 +318,9 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
             this_sub[2] = job['queue']
 
         # where to submit to
-        if LocalRun:
+        if LocalSub is not None:
             time.sleep(1)  # ensure that the assigned id is unique (and same as subtime)
-            submit_id = utils.get_time()
-            LocalSub[submit_id] = job
+            submit_id = str(utils.get_time())
         elif OutFile is None:
             submit_id_raw = subprocess.check_output(this_sub + [job['script']]).decode('UTF-8').replace('\n', '')
             submit_id = submit_id_raw.replace(PBS_suffix, '')
@@ -335,6 +342,9 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
 
             dal.update_job(job, Release=True)
             dal.close_db(conn)
+
+            if LocalSub is not None:
+                LocalSub.submit(local.run_local_job, job)
             continue
 
         # Spawn==True
@@ -345,6 +355,9 @@ def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
         dal.spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
                             db_connection=conn)
         dal.close_db(conn)
+
+        if LocalSub is not None:
+            LocalSub.submit(local.run_local_job, job)
 
 
 def spawn_submit(JobInfo, N):

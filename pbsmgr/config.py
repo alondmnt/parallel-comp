@@ -12,8 +12,8 @@ import os
 
 LocalRun = True  # instead of submitting to cluster, run on local machine
 ServerHost = 'tau.ac.il'
-QFile = '/tamir1/dalon/RP/Consistency/jobs/job_queue.db'
-JobDir = '../jobs/'
+QFile = 'job_queue.db'  # T:/dalon/RP/Consistency/jobs/
+JobDir = 'jobs/'  # ../jobs/
 PBS_suffix = '.power8.tau.ac.il'
 LogDir = JobDir + '{BatchID}/logs/{submit_id}' + PBS_suffix
 LogOut = LogDir + '.OU'  # template
@@ -29,6 +29,7 @@ JobTemplate =   {'BatchID': None,
                  'JobIndex': None,
                  'priority': 1,
                  'name': ['human', 'genome_map'],
+                 'data_type': 'foo',
                  'data': None,
                  'script': 'my_template_script.sh',  # template sciprt, see generate_script()
                  'queue': PBS_queue,
@@ -38,7 +39,7 @@ JobTemplate =   {'BatchID': None,
 # automatically-set variables
 
 if LocalRun:
-    os.environ['PBS_ID'] = 'pbsmgr'
+    os.environ['PBS_JOBID'] = 'pbsmgr'
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on cluster
     PBS_ID_raw = os.environ['PBS_JOBID']
@@ -50,7 +51,7 @@ if 'HOSTNAME' in os.environ:
     hostname = os.environ['HOSTNAME']
 else:
     hostname = []
-if (PBS_ID is not None) or (ServerHost in hostname):
+if ((PBS_ID is not None) or (ServerHost in hostname)) and not LocalRun:
     running_on_cluster = True
 else:
     running_on_cluster = False
