@@ -40,6 +40,12 @@ def generate_script(JobInfo, Template=None):
     global JobDir
     if Template is None:
         Template = JobInfo['script']
+    # case: command line
+    if not os.path.isfile(Template):
+        JobInfo['script'] = Template.format(**JobInfo)
+        return JobInfo
+
+    # case: script
     if JobDir[-1] != '/' and JobDir[-1] != '\\':
         JobDir = JobDir + '/'
     OutDir = JobDir + str(JobInfo['BatchID'])
