@@ -16,6 +16,7 @@ import subprocess
 import time
 import warnings
 
+import numpy as np
 import pandas as pd
 
 from .config import QFile, JobDir, LocalRun, PBS_suffix, PBS_queue, DefResource, \
@@ -147,7 +148,7 @@ def get_qstat(BatchID=PBS_ID):
         return {}
     try:
         return parse_qstat(subprocess.check_output(['qstat', '-f', BatchID]))
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         # sometimes this fails on cluster, not clear why (cluster does not recognize the BatchID)
         print(e)
         return None
@@ -240,6 +241,7 @@ def submit_jobs(MaxJobs=None, MinPrior=0, LocalRun=LocalRun, OutFile=None, Force
     if LocalRun:
         if PBS_ID != 'pbsmgr':
             print('cannot submit from a subprocess.')
+            os.remove(lock_file)
             return
         local_sub = local.get_executor()
     else:
@@ -398,6 +400,17 @@ def spawn_resubmit(BatchID, JobIndex, SpawnCount=None):
     n_miss = SpawnCount - len(dal.spawn_get_info(BatchID, JobIndex)['SpawnID'])
     for _ in range(n_miss):
         submit_one_job(BatchID, JobIndex, Spawn=True, SpawnCount=SpawnCount)
+
+
+def periodic_submitter(period=10, n=np.inf, **kwargs):
+    """ looped calls to submit_jobs(**kwargs).
+        'period' measured in minutes.
+        'n' can be used to limit the number of iterations. """
+    subs = 0
+    while subs < n:
+        submit_jobs(**kwargs)
+        time.sleep(60*period)
+        subs += 1
 
 
 ### QDEL FUNCTIONS ###

@@ -24,6 +24,10 @@ def run_local_job(JobInfo):
     # execute a job locally as a new subprocess
     env = os.environ.copy()
     env.update(PBS_JOBID=JobInfo['submit_id'])
+
+    os.makedirs(os.path.dirname(JobInfo['stdout'][-1]), exist_ok=True)
+    os.makedirs(os.path.dirname(JobInfo['stderr'][-1]), exist_ok=True)
+
     with open(JobInfo['stdout'][-1], 'w') as oid:
         with open(JobInfo['stderr'][-1], 'w') as eid:
             print(JobInfo['script'])

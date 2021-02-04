@@ -38,12 +38,13 @@ JobTemplate =   {'BatchID': None,
 
 # automatically-set variables
 
-if LocalRun:
-    os.environ['PBS_JOBID'] = 'pbsmgr'
 if 'PBS_JOBID' in os.environ:
     # this also serves as a sign that we're running on cluster
     PBS_ID_raw = os.environ['PBS_JOBID']
     PBS_ID = PBS_ID_raw.replace(PBS_suffix, '')
+elif LocalRun:
+    PBS_ID_raw = 'pbsmgr'
+    PBS_ID = 'pbsmgr'
 else:
     PBS_ID_raw = None
     PBS_ID = None
