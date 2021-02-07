@@ -15,9 +15,9 @@ import os
 from subprocess import run, check_output
 import time
 
+from .config import PBS_ID, PBS_suffix, PBS_queue, DefResource, JobDir, LogOut, LogErr
 from . import dal
 from . import utils
-from .config import PBS_ID, PBS_suffix, PBS_queue, DefResource, JobDir, LogOut, LogErr
 
 
 class JobExecutor(object):

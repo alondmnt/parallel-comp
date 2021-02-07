@@ -19,16 +19,15 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from .config import QFile, JobDir, LocalRun, PBS_suffix, PBS_queue, DefResource, \
-        WriteTries, LogOut, LogErr, PBS_ID, running_on_cluster
+from .config import QFile, JobDir, LocalRun, WriteTries, PBS_ID, running_on_cluster
 from . import utils
 from . import dal
 from . import executor
 
 if LocalRun:
-    DefaultJobExecutor = executor.LocalJobExecutor
+    DefaultJobExecutor = executor.LocalJobExecutor()
 else:
-    DefaultJobExecutor = executor.QsubJobExecutor
+    DefaultJobExecutor = executor.QsubJobExecutor()
 
 
 ### QUEUE FUNCTIONS ###
@@ -190,7 +189,7 @@ def get_pbs_queue():
 
 ### SUBMIT FUNCTIONS ###
 
-def submit_jobs(Executor=DefaultJobExecutor(), MaxJobs=None, MinPrior=0,
+def submit_jobs(Executor=DefaultJobExecutor, MaxJobs=None, MinPrior=0,
                 ForceSubmit=False, Filter=''):
     """ submits all next available jobs according to job priorities.
         MaxJobs is loaded from [JobDir]/maxjobs unless specified (default=1000).
@@ -264,7 +263,7 @@ def submit_jobs(Executor=DefaultJobExecutor(), MaxJobs=None, MinPrior=0,
           count - count_in_queue))
 
 
-def submit_one_batch(BatchID, Executor=DefaultJobExecutor(), SubCount=0, MaxJobs=1e6):
+def submit_one_batch(BatchID, Executor=DefaultJobExecutor, SubCount=0, MaxJobs=1e6):
     """ despite its name, this function accepts also an iterable with
         multiple BatchIDs. """
     for batch in utils.make_iter(BatchID):
@@ -287,7 +286,7 @@ def submit_one_batch(BatchID, Executor=DefaultJobExecutor(), SubCount=0, MaxJobs
     return SubCount
 
 
-def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor(), Spawn=False,
+def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor, Spawn=False,
                    SpawnCount=None):
     """ despite its name, this function accepts either an integer
         or an iterable of integers as JobIndex. """
@@ -327,7 +326,7 @@ def spawn_submit(JobInfo, N):
     return dal.get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], SetID=True)
 
 
-def spawn_resubmit(BatchID, JobIndex, Executor=DefaultJobExecutor(),
+def spawn_resubmit(BatchID, JobIndex, Executor=DefaultJobExecutor,
                    SpawnCount=None, spawn_state='submit'):
     """ resubmits spawns that were left in 'submit' state, if they failed
         for some reason. the function will check against PBS queue for queued
@@ -351,7 +350,7 @@ def spawn_resubmit(BatchID, JobIndex, Executor=DefaultJobExecutor(),
     return n_miss
 
 
-def periodic_submitter(period=10, n=np.inf, Executor=DefaultJobExecutor(), **kwargs):
+def periodic_submitter(period=10, n=np.inf, Executor=DefaultJobExecutor, **kwargs):
     """ looped calls to submit_jobs(**kwargs).
         'period' measured in minutes.
         'n' can be used to limit the number of iterations. """
