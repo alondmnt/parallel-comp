@@ -274,6 +274,7 @@ def make_job_unique(BatchID, JobIndex, db_connection=None):
 
 
 def spawn_add_to_db(BatchID, JobIndex, PBS_ID, SpawnCount=None,
+                    spawn_state='submit',
                     db_connection=None, tries=WriteTries):
     for t in range(tries):
         try:
@@ -296,7 +297,7 @@ def spawn_add_to_db(BatchID, JobIndex, PBS_ID, SpawnCount=None,
                                               spawn_state, stdout, stderr)
                             VALUES (?,?,?,?,?,?,?)""",
                          [BatchID, JobIndex, SpawnID, PBS_ID,
-                          'submit', LogOut.format(BatchID=BatchID, submit_id=PBS_ID),
+                          spawn_state, LogOut.format(BatchID=BatchID, submit_id=PBS_ID),
                           LogErr.format(BatchID=BatchID, submit_id=PBS_ID)])
             close_db(conn, db_connection)
             break

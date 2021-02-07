@@ -23,7 +23,12 @@ from .config import QFile, JobDir, LocalRun, PBS_suffix, PBS_queue, DefResource,
         WriteTries, LogOut, LogErr, PBS_ID, running_on_cluster
 from . import utils
 from . import dal
-from . import local
+from . import executor
+
+if LocalRun:
+    DefaultJobExecutor = executor.LocalJobExecutor
+else:
+    DefaultJobExecutor = executor.QsubJobExecutor
 
 
 ### QUEUE FUNCTIONS ###
@@ -185,19 +190,20 @@ def get_pbs_queue():
 
 ### SUBMIT FUNCTIONS ###
 
-def submit_jobs(MaxJobs=None, MinPrior=0, LocalRun=LocalRun, OutFile=None, ForceSubmit=False,
-                Filter=''):
+def submit_jobs(Executor=DefaultJobExecutor(), MaxJobs=None, MinPrior=0,
+                ForceSubmit=False, Filter=''):
     """ submits all next available jobs according to job priorities.
         MaxJobs is loaded from [JobDir]/maxjobs unless specified (default=1000).
         ForceSubmit ignores another process currently submitting jobs (or an
         abandoned lock file).
         Filter are SQL query conditions that get_queue() accepts. """
-    if not running_on_cluster and not LocalRun:
+    submit_to_cluster = isinstance(Executor, executor.ClusterJobExecutor)
+    if not running_on_cluster and submit_to_cluster:
         print('submit_jobs: not running on cluster.')
         return
 
     lock_file = JobDir + 'submitting'
-    if os.path.isfile(lock_file) and OutFile is None and not ForceSubmit:
+    if os.path.isfile(lock_file) and not ForceSubmit:
         sec_since_submit = time.time() - \
                 os.path.getmtime(lock_file)
         if sec_since_submit > 300:
@@ -238,19 +244,6 @@ def submit_jobs(MaxJobs=None, MinPrior=0, LocalRun=LocalRun, OutFile=None, Force
     else:
         isGlobalPriority = False
 
-    if LocalRun:
-        if PBS_ID != 'pbsmgr':
-            print('cannot submit from a subprocess.')
-            os.remove(lock_file)
-            return
-        local_sub = local.get_executor()
-    else:
-        local_sub = None
-    if OutFile is not None:
-        out_file = open(OutFile, 'w')
-        out_file.write('#!/bin/bash\n')
-    else:
-        out_file = None
     count_in_queue = len(get_pbs_queue())
     count = count_in_queue
     for j in sorted(list(Q)):
@@ -262,19 +255,16 @@ def submit_jobs(MaxJobs=None, MinPrior=0, LocalRun=LocalRun, OutFile=None, Force
             continue
         if len(Q[j]) == 0:
             continue
-        count = submit_one_batch(j, count, MaxJobs, OutFile=out_file, LocalSub=local_sub)
+        count = submit_one_batch(j, Executor=Executor, SubCount=count, MaxJobs=MaxJobs)
 
     flag_file.close()
-    if OutFile is not None:
-        out_file.close()
-        os.chmod(OutFile, 0o744)
     os.remove(lock_file)
     print('max jobs: {}\nin queue: {}\nsubmitted: {}'.format(MaxJobs,
           count_in_queue,
           count - count_in_queue))
 
 
-def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None, LocalSub=None):
+def submit_one_batch(BatchID, Executor=DefaultJobExecutor(), SubCount=0, MaxJobs=1e6):
     """ despite its name, this function accepts also an iterable with
         multiple BatchIDs. """
     for batch in utils.make_iter(BatchID):
@@ -286,80 +276,36 @@ def submit_one_batch(BatchID, SubCount=0, MaxJobs=1e6, OutFile=None, LocalSub=No
             if job['priority'] < job_priority:
                 continue
             if job['state'] == 'init':
-                submit_one_job(batch, job['JobIndex'], OutFile=OutFile, LocalSub=LocalSub)
+                submit_one_job(batch, job['JobIndex'], Executor=Executor)
                 SubCount += 1
-                if SubCount >= MaxJobs:
-                    break
+            elif job['state'] == 'spawn':
+                SubCount += spawn_resubmit(batch, job['JobIndex'], Executor=Executor,
+                                           spawn_state='init')
+            if SubCount >= MaxJobs:
+                break
+
     return SubCount
 
 
-def submit_one_job(BatchID, JobIndex, Spawn=False, SpawnCount=None,
-                   OutFile=None, LocalSub=None):
+def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor(), Spawn=False,
+                   SpawnCount=None):
     """ despite its name, this function accepts either an integer
         or an iterable of integers as JobIndex. """
-    ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
-    OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(BatchID)
-    if not os.path.isdir(ErrDir):
-        os.makedirs(ErrDir)
-
-    Qsub = ['qsub', '-q', PBS_queue, '-e', ErrDir, '-o', OutDir, '-l']
 
     for j in utils.make_iter(JobIndex):
         conn = dal.open_db()
         job = dal.get_job_info(BatchID, j, HoldFile=True, db_connection=conn)
         print('submiting:\t{}'.format(job['script']))
-        if job['state'] != 'init':
+        if job['state'] in ['submit', 'run']:
             warnings.warn('already submitted')
-        if 'resources' in job:
-            this_res = job['resources']
-        else:
-            this_res = DefResource
-        this_sub = Qsub + [','.join(['{}={}'.format(k, v)
-                           for k, v in sorted(this_res.items())])]
-        if 'queue' in job:
-            this_sub[2] = job['queue']
 
-        # where to submit to
-        if LocalSub is not None:
-            time.sleep(1)  # ensure that the assigned id is unique (and same as subtime)
-            submit_id = str(utils.get_time())
-        elif OutFile is None:
-            submit_id_raw = subprocess.check_output(this_sub + [job['script']]).decode('UTF-8').replace('\n', '')
-            submit_id = submit_id_raw.replace(PBS_suffix, '')
-        else:
-            OutFile.write(job['script'] + '\n')
-            submit_id_raw = OutFile.name
-            submit_id = OutFile.name
+        submit_id = Executor.submit(job, Spawn=Spawn)
 
-        if not Spawn:
-            job['state'] = 'submit'
-            job['submit_id'] = submit_id
-            job['subtime'] = utils.get_time()
-            utils.dict_append(job, 'stdout', LogOut.format(**job))
-            utils.dict_append(job, 'stderr', LogErr.format(**job))
-            if 'PBS_ID' in job:
-                del job['PBS_ID']
-            if 'qstat' in job:
-                del job['qstat']
-
-            dal.update_job(job, Release=True)
-            dal.close_db(conn)
-
-            if LocalSub is not None:
-                LocalSub.submit(local.run_local_job, job)
-            continue
-
-        # Spawn==True
-        if job['state'] != 'spawn':
-            job['state'] = 'spawn'
-            dal.update_job(job, Release=True)
-
-        dal.spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
-                            db_connection=conn)
+        if Spawn:
+            spawn_state = 'submit' if submit_id is not None else 'init'
+            dal.spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
+                                spawn_state=spawn_state, db_connection=conn)
         dal.close_db(conn)
-
-        if LocalSub is not None:
-            LocalSub.submit(local.run_local_job, job)
 
 
 def spawn_submit(JobInfo, N):
@@ -381,7 +327,8 @@ def spawn_submit(JobInfo, N):
     return dal.get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], SetID=True)
 
 
-def spawn_resubmit(BatchID, JobIndex, SpawnCount=None):
+def spawn_resubmit(BatchID, JobIndex, Executor=DefaultJobExecutor(),
+                   SpawnCount=None, spawn_state='submit'):
     """ resubmits spawns that were left in 'submit' state, if they failed
         for some reason. the function will check against PBS queue for queued
         spawns and will not submit them again.
@@ -393,22 +340,24 @@ def spawn_resubmit(BatchID, JobIndex, SpawnCount=None):
                                             db_connection=conn)['SpawnID'])
 
     Q_server = str(tuple(get_pbs_queue())).replace(',)', ')')
-    condition = f'spawn_state=="submit" AND PBS_ID NOT IN {Q_server}'
+    condition = f'spawn_state=="{spawn_state}" AND PBS_ID NOT IN {Q_server}'
     dal.spawn_del_from_db(BatchID, JobIndex, Filter=condition, db_connection=conn)
     dal.close_db(conn)
 
     n_miss = SpawnCount - len(dal.spawn_get_info(BatchID, JobIndex)['SpawnID'])
     for _ in range(n_miss):
-        submit_one_job(BatchID, JobIndex, Spawn=True, SpawnCount=SpawnCount)
+        submit_one_job(BatchID, JobIndex, Executor=Executor, Spawn=True, SpawnCount=SpawnCount)
+
+    return n_miss
 
 
-def periodic_submitter(period=10, n=np.inf, **kwargs):
+def periodic_submitter(period=10, n=np.inf, Executor=DefaultJobExecutor(), **kwargs):
     """ looped calls to submit_jobs(**kwargs).
         'period' measured in minutes.
         'n' can be used to limit the number of iterations. """
     subs = 0
     while subs < n:
-        submit_jobs(**kwargs)
+        submit_jobs(Executor=Executor, **kwargs)
         time.sleep(60*period)
         subs += 1
 
