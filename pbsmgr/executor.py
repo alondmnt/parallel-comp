@@ -13,10 +13,11 @@ Created on Wed Mar 18 22:45:50 2015
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 import os
+import re
 from subprocess import run, check_output
-import time
 
-from .config import PBS_ID, PBS_suffix, PBS_queue, DefResource, JobDir, LogOut, LogErr
+from .config import PBS_ID, PBS_suffix, PBS_queue, DefResource, JobDir, LogOut, LogErr, \
+        running_on_cluster
 from . import dal
 from . import utils
 
@@ -42,8 +43,8 @@ class ClusterJobExecutor(JobExecutor):
     pass
 
 
-class QsubJobExecutor(ClusterJobExecutor):
-    """ QsubExecutor is initiated with default params that can be
+class PBSJobExecutor(ClusterJobExecutor):
+    """ PBSJobExecutor is initiated with default params that can be
         overriden by jobs. """
     def __init__(self, queue=PBS_queue, resources=DefResource,
                  id_suffix=PBS_suffix):
@@ -75,6 +76,23 @@ class QsubJobExecutor(ClusterJobExecutor):
 
         return submit_id
 
+    def qstat(self):
+        Q = {}
+        if not running_on_cluster:
+            print('get_pbs_queue: not running on cluster.')
+            return Q
+        data = check_output(['qstat', '-u', os.environ['USER']],
+                            universal_newlines=True)
+        data = data.split('\n')
+        job_parse = re.compile(r'(\d+).')
+        line_parse = re.compile(r'\s+')
+        for line in data:
+            job = job_parse.match(line)  # power
+            if job:
+                line = line_parse.split(line)
+                Q[job.group(1)] = [line[3], line[9]]
+        return Q
+
 
 class LocalJobExecutor(JobExecutor):
     """ returns a pool executer with a submit method.
@@ -93,10 +111,10 @@ class LocalJobExecutor(JobExecutor):
         OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
         os.makedirs(OutDir, exist_ok=True)
 
-        submit_id = str(utils.get_time())
+        submit_id = str(utils.get_id())
         update_fields(JobInfo, submit_id, Spawn)
         self._pool.submit(self.__run_local_job, JobInfo)
-        self._queue[submit_id] = [(JobInfo['BatchID'], JobInfo['JobIndex']), 'Q']
+        self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q']
 
         return submit_id
 
@@ -125,6 +143,7 @@ class FileJobExecutor(JobExecutor):
     """ writes calls to job scripts into a shell script. """
     def __init__(self, script_file):
         self.path = script_file
+        self._queue = OrderedDict()
         os.makedirs(os.path.dirname(self.path))
         with open(self.path, 'w') as fid:
             # will delete any existing file
@@ -132,15 +151,17 @@ class FileJobExecutor(JobExecutor):
         os.chmod(self.path, 0o744)
 
     def submit(self, JobInfo, Spawn):
+        submit_id = utils.get_id()
         with open(self.path, 'a') as fid:
             fid.write(JobInfo['script'] + '\n')
-            update_fields(JobInfo, self.path, Spawn)
-        return self.path
+            update_fields(JobInfo, submit_id, Spawn)
+        self._queue[submit_id] = [(JobInfo['BatchID'], JobInfo['JobIndex']), 'Q']
+
+        return submit_id
 
 
 def update_fields(JobInfo, submit_id, Spawn):
     if not Spawn:
-        time.sleep(1)  # ensure that the assigned id is unique (and same as subtime)
         JobInfo['submit_id'] = submit_id
         JobInfo['subtime'] = utils.get_time()
         JobInfo['state'] = 'submit'
