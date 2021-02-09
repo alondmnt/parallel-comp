@@ -3,13 +3,14 @@
 a PBS (portable batch system) parallel-computing job manager.
 see also: README.md, example.ipynb
 
-this submodule handles execution of jobs in different systems,
-such as: PBS cluster, local multi-CPU machine, or submission
-to a script file via a unified API.
+this submodule handles via a unified API the execution of jobs 
+on different systems, such as: PBS cluster, local multi-CPU 
+machine, or submission to a script file .
 
 @author: Alon Diament, Tuller Lab
 Created on Wed Mar 18 22:45:50 2015
 """
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 import os
 from subprocess import run, check_output
@@ -26,7 +27,12 @@ class JobExecutor(object):
         pass
     def submit(self, JobInfo, Spawn=False):
         """ submits the job to some executor, updates the following fields: 
-            submit_id, subtime, state. """
+            submit_id, subtime, state.
+            must return submit_id or 'failed'. """
+        pass
+    def qstat(self):
+        """ returns a dict with PBS_IDs as keys and [name, state in {'R','Q'}]
+            as values. """
         pass
     def shutdown(self):
         pass
@@ -75,11 +81,12 @@ class LocalJobExecutor(JobExecutor):
         currently using ThreadPoolExecutor to start new subprocesses. """
     def __init__(self, max_workers=os.cpu_count()):
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
+        self._queue = OrderedDict()
 
     def submit(self, JobInfo, Spawn=False):
         if PBS_ID != 'pbsmgr':
             print('cannot submit from a subprocess. PBS_ID muse be set to "pbsmgr".')
-            return
+            return 'failed'
 
         ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
         os.makedirs(ErrDir, exist_ok=True)
@@ -89,7 +96,12 @@ class LocalJobExecutor(JobExecutor):
         submit_id = str(utils.get_time())
         update_fields(JobInfo, submit_id, Spawn)
         self._pool.submit(self.__run_local_job, JobInfo)
+        self._queue[submit_id] = [(JobInfo['BatchID'], JobInfo['JobIndex']), 'Q']
+
         return submit_id
+
+    def qstat(self):
+        return self._queue
 
     def shutdown(self, wait=True):
         self._pool.shutdown(wait=wait)
@@ -102,7 +114,9 @@ class LocalJobExecutor(JobExecutor):
         with open(JobInfo['stdout'][-1], 'w') as oid:
             with open(JobInfo['stderr'][-1], 'w') as eid:
                 print(JobInfo['script'])
+                self._queue[JobInfo['submit_id']][1] = 'R'
                 job_res = run(JobInfo['script'], shell=True, env=env, stdout=oid, stderr=eid)
+        del self._queue[JobInfo['submit_id']]
 
         return job_res.returncode
 
