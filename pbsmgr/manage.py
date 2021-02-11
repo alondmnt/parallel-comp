@@ -27,13 +27,13 @@ from . import executor
 if LocalRun:
     DefaultJobExecutor = executor.LocalJobExecutor()
 else:
-    DefaultJobExecutor = executor.QsubJobExecutor()
+    DefaultJobExecutor = executor.PBSJobExecutor()
 
 
 ### QUEUE FUNCTIONS ###
 
 def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
-              Display=None, Filter=''):
+              Display=None, Filter='', Executor=DefaultJobExecutor):
     """ Verbose mode prints a job report to screen, otherwise a dictionary Q
         is returned with the metadata of all jobs.
         ResetMissing will set the state of jobs that failed while online.
@@ -51,7 +51,7 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
 
     # reads from global job queue file
     Q = get_sql_queue(QFile, Filter)
-    Q_server = get_pbs_queue()
+    Q_server = Executor.qstat()
 
     maybe_online = {'submit', 'spawn', 'run'}
     missing = {}  # submitted but not running
@@ -169,24 +169,6 @@ def parse_qstat(text):
     return JobInfo
 
 
-def get_pbs_queue():
-    Q = {}
-    if not running_on_cluster:
-        print('get_pbs_queue: not running on cluster.')
-        return Q
-    data = subprocess.check_output(['qstat', '-u', os.environ['USER']],
-                                   universal_newlines=True)
-    data = data.split('\n')
-    job_parse = re.compile(r'(\d+).')
-    line_parse = re.compile(r'\s+')
-    for line in data:
-        job = job_parse.match(line)  # power
-        if job:
-            line = line_parse.split(line)
-            Q[job.group(1)] = [line[3], line[9]]
-    return Q
-
-
 ### SUBMIT FUNCTIONS ###
 
 def submit_jobs(Executor=DefaultJobExecutor, MaxJobs=None, MinPrior=0,
@@ -218,7 +200,7 @@ def submit_jobs(Executor=DefaultJobExecutor, MaxJobs=None, MinPrior=0,
         except:
             MaxJobs = 1000
 
-    Q = get_queue(Verbose=False, Filter=Filter)
+    Q = get_queue(Verbose=False, Filter=Filter, Executor=Executor)
 
     """
     BATCH/JOB PRIORITY RULES
@@ -243,7 +225,7 @@ def submit_jobs(Executor=DefaultJobExecutor, MaxJobs=None, MinPrior=0,
     else:
         isGlobalPriority = False
 
-    count_in_queue = len(get_pbs_queue())
+    count_in_queue = len(Executor.qstat())
     count = count_in_queue
     for j in sorted(list(Q)):
         if count >= MaxJobs:
@@ -293,7 +275,8 @@ def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor, Spawn=False,
 
     for j in utils.make_iter(JobIndex):
         conn = dal.open_db()
-        job = dal.get_job_info(BatchID, j, HoldFile=True, db_connection=conn)
+        job = dal.get_job_info(BatchID, j, HoldFile=True, ignore_spawn=True,
+                               db_connection=conn)
         print('submiting:\t{}'.format(job['script']))
         if job['state'] in ['submit', 'run']:
             warnings.warn('already submitted')
@@ -301,7 +284,12 @@ def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor, Spawn=False,
         submit_id = Executor.submit(job, Spawn=Spawn)
 
         if Spawn:
-            spawn_state = 'submit' if submit_id is not None else 'init'
+            spawn_state = 'submit'
+            if submit_id == 'failed':
+                spawn_state = 'init'
+                job['state'] = 'spawn'  # we need to update state to spawn here
+                dal.update_job(job)
+
             dal.spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
                                 spawn_state=spawn_state, db_connection=conn)
         dal.close_db(conn)
@@ -335,15 +323,15 @@ def spawn_resubmit(BatchID, JobIndex, Executor=DefaultJobExecutor,
         of spawns. """
     conn = dal.open_db()
     if SpawnCount is None:
-        SpawnCount = len(dal.spawn_get_info(BatchID, JobIndex,
+        SpawnCount = len(dal.spawn_get_info(BatchID, JobIndex, PBS_ID=None,
                                             db_connection=conn)['SpawnID'])
 
-    Q_server = str(tuple(get_pbs_queue())).replace(',)', ')')
+    Q_server = str(tuple(Executor.qstat())).replace(',)', ')')
     condition = f'spawn_state=="{spawn_state}" AND PBS_ID NOT IN {Q_server}'
     dal.spawn_del_from_db(BatchID, JobIndex, Filter=condition, db_connection=conn)
     dal.close_db(conn)
 
-    n_miss = SpawnCount - len(dal.spawn_get_info(BatchID, JobIndex)['SpawnID'])
+    n_miss = SpawnCount - len(dal.spawn_get_info(BatchID, JobIndex, PBS_ID=None)['SpawnID'])
     for _ in range(n_miss):
         submit_one_job(BatchID, JobIndex, Executor=Executor, Spawn=True, SpawnCount=SpawnCount)
 
