@@ -25,8 +25,7 @@ from . import utils
 def get_job_template(SetID=False):
     res = deepcopy(JobTemplate)
     if SetID:
-        time.sleep(1)  # precaution against non-unique IDs
-        res['BatchID'] = utils.get_time()
+        res['BatchID'] = utils.get_id()
     return res
 
 

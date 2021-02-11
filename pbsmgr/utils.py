@@ -9,11 +9,17 @@ this submodule hold various general functions.
 Created on Wed Mar 18 22:45:50 2015
 """
 from datetime import datetime
+import time
 
 
 def get_time():
     """ readable timestamp in seconds. """
     return int(datetime.now().strftime('%Y%m%d%H%M%S'))
+
+
+def get_id():
+    time.sleep(1)  # precaution against non-unique IDs
+    return get_time()
 
 
 def make_iter(var):
