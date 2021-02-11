@@ -476,9 +476,6 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
                                             db_connection=conn)
             if not (pd.Series(spawn_dict['spawn_state']) == 'complete').all():
                 dal.close_db(conn, db_connection)
-                # we run the following just in case some job failed
-                # I think this shouldn't cause any infinite loop
-                spawn_resubmit(JobInfo['BatchID'], JobInfo['JobIndex'])
                 break
 
             # all spawn jobs completed

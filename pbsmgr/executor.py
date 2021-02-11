@@ -103,7 +103,7 @@ class LocalJobExecutor(JobExecutor):
 
     def submit(self, JobInfo, Spawn=False):
         if PBS_ID != 'pbsmgr':
-            print('cannot submit from a subprocess. PBS_ID muse be set to "pbsmgr".')
+            print('cannot submit from a subprocess. PBS_ID must be set to "pbsmgr".')
             return 'failed'
 
         ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
@@ -131,7 +131,7 @@ class LocalJobExecutor(JobExecutor):
 
         with open(JobInfo['stdout'][-1], 'w') as oid:
             with open(JobInfo['stderr'][-1], 'w') as eid:
-                print(JobInfo['script'])
+                print(JobInfo['submit_id'], JobInfo['script'])
                 self._queue[JobInfo['submit_id']][1] = 'R'
                 job_res = run(JobInfo['script'], shell=True, env=env, stdout=oid, stderr=eid)
         del self._queue[JobInfo['submit_id']]
@@ -154,15 +154,17 @@ class FileJobExecutor(JobExecutor):
         submit_id = utils.get_id()
         with open(self.path, 'a') as fid:
             fid.write(JobInfo['script'] + '\n')
-            update_fields(JobInfo, submit_id, Spawn)
+        update_fields(JobInfo, submit_id, Spawn)
         self._queue[submit_id] = [(JobInfo['BatchID'], JobInfo['JobIndex']), 'Q']
 
         return submit_id
 
 
 def update_fields(JobInfo, submit_id, Spawn):
+    JobInfo['submit_id'] = submit_id
+    # submit_id used by LocalJobExecutor so must update here (even if not in DB)
+
     if not Spawn:
-        JobInfo['submit_id'] = submit_id
         JobInfo['subtime'] = utils.get_time()
         JobInfo['state'] = 'submit'
 
