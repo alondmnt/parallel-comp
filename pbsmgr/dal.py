@@ -125,7 +125,8 @@ def get_batch_info(BatchID, db_connection=None):
 
 
 def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
-                 db_connection=None, enforce_unique_job=True, ignore_spawn=False):
+                 db_connection=None, enforce_unique_job=True, ignore_spawn=False,
+                 PBS_ID=PBS_ID):
     """ HoldFile is ignored but kept for backward compatibility. """
     conn = open_db(db_connection)
     job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
@@ -144,10 +145,15 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
 
     close_db(conn, db_connection)
 
-    if not ignore_spawn and JobInfo['state'] == 'spawn':
-        # no update made to job in DB
-        JobInfo.update(spawn_get_info(BatchID, JobIndex, PBS_ID=PBS_ID,
-                                      db_connection=db_connection))
+    if JobInfo['state'] == 'spawn':
+        if ignore_spawn:
+            # do not leave old data just lying around
+            JobInfo.pop('spawn_state', None)
+            JobInfo.pop('SpawnID', None)
+        else:
+            # no update made to job in DB
+            JobInfo.update(spawn_get_info(BatchID, JobIndex, PBS_ID=PBS_ID,
+                                        db_connection=db_connection))
         return JobInfo
 
     # not spawn
@@ -166,7 +172,8 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
     return JobInfo
 
 
-def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None):
+def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None,
+                   tries=WriteTries):
     fields = ['SpawnID', 'PBS_ID', 'spawn_state', 'stdout', 'stderr']
     condition = f'BatchID={BatchID} AND JobIndex={JobIndex}'
     max_query_size = None
@@ -174,16 +181,25 @@ def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None):
         condition += f' AND PBS_ID="{PBS_ID}"'
         max_query_size = 1
 
-    conn = open_db(db_connection)
-    spawn_query = pd.read_sql(f"""SELECT {', '.join(fields)}
-                                  FROM spawn
-                                  WHERE {condition}""", conn)
-    close_db(conn, db_connection)
+    # why would we need tries for reading? because it's possible that
+    # the spawn table in the DB hasn't been updated yet
+    for t in range(tries):
+        conn = open_db(db_connection)
+        spawn_query = pd.read_sql(f"""SELECT {', '.join(fields)}
+                                    FROM spawn
+                                    WHERE {condition}""", conn)
+        close_db(conn, db_connection)
+        try:
+            if len(spawn_query) == 0:
+                raise Exception(f'no corresponding spawn job for {BatchID, JobIndex, PBS_ID}')
+            elif (max_query_size is not None) and (len(spawn_query) > max_query_size):
+                raise Exception(f'too many spawns for PBS_ID={PBS_ID}')
 
-    if len(spawn_query) == 0:
-        raise Exception(f'no corresponding spawn job for {BatchID, JobIndex, PBS_ID}')
-    elif (max_query_size is not None) and (len(spawn_query) > max_query_size):
-        raise Exception(f'too many spawns for PBS_ID={PBS_ID}')
+        except Exception as err:
+            print(f'spawn_get_info: try {t+1} failed with:\n{err}\n')
+            time.sleep(1)
+            if t == tries - 1:
+                raise(err)
 
     return spawn_query.to_dict(orient='list')  # return a dict
 

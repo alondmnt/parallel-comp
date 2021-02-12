@@ -126,15 +126,25 @@ class LocalJobExecutor(JobExecutor):
 
     def __run_local_job(self, JobInfo):
         # execute a job locally as a new subprocess
-        env = os.environ.copy()
-        env.update(PBS_JOBID=JobInfo['submit_id'])
+        try:
+            env = os.environ.copy()
+            env.update(PBS_JOBID=JobInfo['submit_id'])
 
-        with open(JobInfo['stdout'][-1], 'w') as oid:
-            with open(JobInfo['stderr'][-1], 'w') as eid:
-                print(JobInfo['submit_id'], JobInfo['script'])
-                self._queue[JobInfo['submit_id']][1] = 'R'
-                job_res = run(JobInfo['script'], shell=True, env=env, stdout=oid, stderr=eid)
-        del self._queue[JobInfo['submit_id']]
+            if JobInfo['state'] == 'spawn':
+                # we need to get the right stdout/stderr
+                JobInfo.update(dal.spawn_get_info(JobInfo['BatchID'],
+                        JobInfo['JobIndex'], PBS_ID=JobInfo['submit_id']))
+
+            with open(JobInfo['stdout'][-1], 'w') as oid:
+                with open(JobInfo['stderr'][-1], 'w') as eid:
+                    print(JobInfo['submit_id'], JobInfo['script'])
+                    self._queue[JobInfo['submit_id']][1] = 'R'
+                    job_res = run(JobInfo['script'], shell=True, env=env, stdout=oid, stderr=eid)
+            del self._queue[JobInfo['submit_id']]
+
+        except Exception as err:
+            print(f"executing job ({JobInfo['BatchID']}, {JobInfo['JobIndex']}) failed with error: \n{err}")
+            del self._queue[JobInfo['submit_id']]
 
         return job_res.returncode
 
