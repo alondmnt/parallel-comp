@@ -50,7 +50,8 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
             for a differences Display filtering and Filter see the README. """
 
     # reads from global job queue file
-    Q = get_sql_queue(QFile, Filter)
+    conn = dal.open_db()
+    Q = get_sql_queue(Filter, db_connection=conn)
     Q_server = Executor.qstat()
 
     maybe_online = {'submit', 'spawn', 'run'}
@@ -68,7 +69,8 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
         state = {}
         for job in Q[BatchID]:
             if job['state'] == 'spawn':
-                job.update(dal.spawn_get_info(job['BatchID'], job['JobIndex']))
+                job.update(dal.spawn_get_info(job['BatchID'], job['JobIndex'],
+                                              db_connection=conn))
 
             cnt['total'] += 1
             job_index = job['JobIndex']
@@ -99,6 +101,8 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
                 print('\n{}: {}'.format(BatchID, '/'.join(job['name'])))
                 print(state)
 
+    dal.close_db(conn)
+
     if ResetMissing:
         for BatchID in missing:
             for JobIndex in missing[BatchID]:
@@ -125,8 +129,8 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
             dal.print_log(BatchID, missing[BatchID], 'stderr')
 
 
-def get_sql_queue(QFile, Filter=''):
-    conn = dal.open_db()
+def get_sql_queue(Filter='', db_connection=None):
+    conn = dal.open_db(db_connection=db_connection)
 
     filter_str = ''
     if len(Filter):
@@ -139,7 +143,7 @@ def get_sql_queue(QFile, Filter=''):
                                FROM batch b INNER JOIN job j 
                                ON j.BatchID = b.BatchID) """ + filter_str,
                            conn)
-    dal.close_db(conn)
+    dal.close_db(conn, db_connection=db_connection)
     return df.iloc[:, 1:].groupby('BatchID')\
         .apply(lambda df: df.sort_values('JobIndex')[['metadata', 'md5']]\
                .apply(dal.unpack_job, axis=1)\
