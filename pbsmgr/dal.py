@@ -196,7 +196,7 @@ def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None,
                 raise Exception(f'too many spawns for PBS_ID={PBS_ID}')
 
         except Exception as err:
-            print(f'spawn_get_info: try {t+1} failed with:\n{err}\n')
+            print(f'spawn_get_info: try {t+1}/{tries} failed with:\n{err}\n')
             time.sleep(1)
             if t == tries - 1:
                 raise(err)
@@ -258,7 +258,7 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
 
         except Exception as err:
             close_db(conn, db_connection)
-            print(f'update_job: try {t+1} failed with:\n{err}\n')
+            print(f'update_job: try {t+1}/{tries} failed with:\n{err}\n')
             JobInfo['md5'] = md5_init  # revert to previous md5 to pass tests
             time.sleep(1)
             if t == tries - 1:
@@ -320,7 +320,7 @@ def spawn_add_to_db(BatchID, JobIndex, PBS_ID, SpawnCount=None,
 
         except Exception as err:
             close_db(conn, db_connection)
-            print(f'spawn_add_to_db: try {t+1} failed with:\n{err}\n')
+            print(f'spawn_add_to_db: try {t+1}/{tries} failed with:\n{err}\n')
             time.sleep(1)
             if t == tries - 1:
                 raise(err)
@@ -343,7 +343,7 @@ def spawn_del_from_db(BatchID, JobIndex, db_connection=None, tries=WriteTries,
 
         except Exception as err:
             close_db(conn, db_connection)
-            print(f'spawn_del_from_db: try {t+1} failed with:\n{err}\n')
+            print(f'spawn_del_from_db: try {t+1}/{tries} failed with:\n{err}\n')
             time.sleep(1)
             if t == tries - 1:
                 raise(err)
