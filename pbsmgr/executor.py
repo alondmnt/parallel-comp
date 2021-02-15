@@ -123,7 +123,7 @@ class LocalJobExecutor(JobExecutor):
         submit_id = str(utils.get_id())
         update_fields(JobInfo, submit_id, Spawn)
         res = self._pool.submit(self.__run_local_job, JobInfo)
-        # we store a Future object with the result object of the run
+        # we store a Future object with the result of the run in queue
         self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q', res]
 
         return submit_id
@@ -213,9 +213,24 @@ class FileJobExecutor(JobExecutor):
             fid.write(JobInfo['script'] +
                       f"  # ({JobInfo['BatchID']}, {JobInfo['JobIndex']})\n")
         update_fields(JobInfo, submit_id, Spawn)
-        self._queue[submit_id] = [(JobInfo['BatchID'], JobInfo['JobIndex']), 'Q']
+        self._queue[submit_id] = [f"{JobInfo['BatchID']}, {JobInfo['JobIndex']}", 'Q']
 
         return submit_id
+
+    def qstat(self):
+        return self._queue
+
+    def qdel(self, JobInfo):
+        """ re-write script with one job omitted. """
+        tag = f"{JobInfo['BatchID']}, {JobInfo['JobIndex']}"
+        with open(self.path + '.tmp', 'w') as wid:
+            with open(self.path, 'r') as rid:
+                for line in rid.readlines():
+                    if not tag in line:
+                        wid.write(line)
+
+        os.rename(self.path + '.tmp', self.path)
+        self._queue = {k: v for k, v in self._queue.items() if tag not in v}
 
 
 def update_fields(JobInfo, submit_id, Spawn):
