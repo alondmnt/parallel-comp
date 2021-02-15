@@ -201,13 +201,16 @@ class FileJobExecutor(JobExecutor):
     def __init__(self, script_file):
         self.path = script_file
         self._queue = OrderedDict()
-        os.makedirs(os.path.dirname(self.path))
+        if os.path.dirname(self.path):
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
         with open(self.path, 'w') as fid:
             # will delete any existing file
             fid.write('#!/bin/bash\n\n')
         os.chmod(self.path, 0o744)
 
     def submit(self, JobInfo, Spawn):
+        if Spawn:
+            raise Exception('FileJobExecutor does not support spawn jobs.')
         submit_id = utils.get_id()
         with open(self.path, 'a') as fid:
             fid.write(JobInfo['script'] +
@@ -229,7 +232,9 @@ class FileJobExecutor(JobExecutor):
                     if not tag in line:
                         wid.write(line)
 
+        os.remove(self.path)
         os.rename(self.path + '.tmp', self.path)
+        os.chmod(self.path, 0o744)
         self._queue = {k: v for k, v in self._queue.items() if tag not in v}
 
 
