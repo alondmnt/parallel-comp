@@ -26,15 +26,21 @@ class JobExecutor(object):
     """ dummy template for a JobExecutor. """
     def __init__(self):
         pass
+
     def submit(self, JobInfo, Spawn=False):
         """ submits the job to some executor, updates the following fields: 
             submit_id, subtime, state.
             must return submit_id or 'failed'. """
         pass
+
     def qstat(self):
         """ returns a dict with PBS_IDs as keys and [name, state in {'R','Q'}]
             as values. """
         pass
+
+    def qdel(self, JobInfo):
+        pass
+
     def shutdown(self):
         pass
 
@@ -97,13 +103,16 @@ class PBSJobExecutor(ClusterJobExecutor):
 class LocalJobExecutor(JobExecutor):
     """ returns a pool executer with a submit method.
         currently using ThreadPoolExecutor to start new subprocesses. """
-    def __init__(self, max_workers=os.cpu_count()):
+    def __init__(self, max_workers=os.cpu_count(), verbose=2):
+        """ verbose level 1 is for muted exceptions, 2 is for warnings, 
+            3 is for debugging logs. """
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
         self._queue = OrderedDict()
+        self.verbose = verbose
 
     def submit(self, JobInfo, Spawn=False):
         if PBS_ID != 'pbsmgr':
-            print('cannot submit from a subprocess. PBS_ID must be set to "pbsmgr".')
+            self.__print('cannot submit from a subprocess. PBS_ID must be set to "pbsmgr".', 2)
             return 'failed'
 
         ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
@@ -113,13 +122,29 @@ class LocalJobExecutor(JobExecutor):
 
         submit_id = str(utils.get_id())
         update_fields(JobInfo, submit_id, Spawn)
-        self._pool.submit(self.__run_local_job, JobInfo)
-        self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q']
+        # we store a Future object with the result object of the run 
+        self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q', 
+                                  self._pool.submit(self.__run_local_job, JobInfo)]
 
         return submit_id
 
     def qstat(self):
-        return self._queue
+        return {k: v for k, v in self._queue.items() if v[1] != 'd'}
+
+    def qdel(self, JobInfo):
+        """ since we don't have easy accesss to the pool's internal queue, 
+            we instead mark a job for deletion. """
+        try:
+            self.__validate_job(JobInfo)
+            job_list = utils.make_iter(JobInfo['submit_id']) + \
+                    utils.make_iter(JobInfo['PBS_ID'])
+            for job in job_list:
+                if self._queue[job][1] == 'R':
+                    self.__print(f"job {job} is already running (cannot delete it)", 2)
+                else:
+                    self._queue[job][1] = 'd'
+        except Exception as err:
+            self.__print(err, 1)
 
     def shutdown(self, wait=True):
         self._pool.shutdown(wait=wait)
@@ -127,6 +152,11 @@ class LocalJobExecutor(JobExecutor):
     def __run_local_job(self, JobInfo):
         # execute a job locally as a new subprocess
         try:
+            self.__validate_job(JobInfo)
+            if self._queue[JobInfo['submit_id']][1] == 'd':
+                self.__print(f"job {JobInfo['submit_id']} was deleted", 3)
+                return 0
+
             env = os.environ.copy()
             env.update(PBS_JOBID=JobInfo['submit_id'])
 
@@ -137,16 +167,29 @@ class LocalJobExecutor(JobExecutor):
 
             with open(JobInfo['stdout'][-1], 'w') as oid:
                 with open(JobInfo['stderr'][-1], 'w') as eid:
-                    print(JobInfo['submit_id'], JobInfo['script'])
+                    self.__print(f"JobInfo['submit_id']: JobInfo['script']", 3)
                     self._queue[JobInfo['submit_id']][1] = 'R'
                     job_res = run(JobInfo['script'], shell=True, env=env, stdout=oid, stderr=eid)
             del self._queue[JobInfo['submit_id']]
 
         except Exception as err:
-            print(f"executing job ({JobInfo['BatchID']}, {JobInfo['JobIndex']}) failed with error: \n{err}")
+            self.__print(f"executing job ({JobInfo['BatchID']}, {JobInfo['JobIndex']}) failed with error: \n{err}", 1)
             del self._queue[JobInfo['submit_id']]
 
         return job_res.returncode
+
+    def __validate_job(self, JobInfo):
+        if 'submit_id' not in JobInfo:
+            raise Exception(f"unknown submit_id for ({JobInfo['BatchID'], JobInfo['JobIndex']})")
+        submit_id = JobInfo['submit_id']
+        if submit_id not in self._queue:
+            raise Exception(f"non-existing job {submit_id}")
+        if len(self._queue[submit_id]) != 2:
+            raise Exception(f"bad queue entry {submit_id}: {self._queue[submit_id]}")
+
+    def __print(self, string, verbose_level=3):
+        if self.verbose >= verbose_level:
+            print(string)
 
 
 class FileJobExecutor(JobExecutor):
@@ -163,7 +206,8 @@ class FileJobExecutor(JobExecutor):
     def submit(self, JobInfo, Spawn):
         submit_id = utils.get_id()
         with open(self.path, 'a') as fid:
-            fid.write(JobInfo['script'] + '\n')
+            fid.write(JobInfo['script'] +
+                      f"  # ({JobInfo['BatchID']}, {JobInfo['JobIndex']})\n")
         update_fields(JobInfo, submit_id, Spawn)
         self._queue[submit_id] = [(JobInfo['BatchID'], JobInfo['JobIndex']), 'Q']
 
