@@ -122,27 +122,34 @@ class LocalJobExecutor(JobExecutor):
 
         submit_id = str(utils.get_id())
         update_fields(JobInfo, submit_id, Spawn)
-        # we store a Future object with the result object of the run 
-        self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q', 
-                                  self._pool.submit(self.__run_local_job, JobInfo)]
+        res = self._pool.submit(self.__run_local_job, JobInfo)
+        # we store a Future object with the result object of the run
+        self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q', res]
 
         return submit_id
 
     def qstat(self):
-        return {k: v for k, v in self._queue.items() if v[1] != 'd'}
+        return self._queue
 
     def qdel(self, JobInfo):
-        """ since we don't have easy accesss to the pool's internal queue, 
-            we instead mark a job for deletion. """
         try:
-            self.__validate_job(JobInfo)
-            job_list = utils.make_iter(JobInfo['submit_id']) + \
-                    utils.make_iter(JobInfo['PBS_ID'])
+            # handling running/submitted jobs/spawns by using both fields
+            job_list = []
+            if 'submit_id' in JobInfo:
+                job_list += utils.make_iter(JobInfo['submit_id'])
+            if 'PBS_ID' in JobInfo:
+                job_list += utils.make_iter(JobInfo['PBS_ID'])
+            job_list = list(set(job_list))  # unique
+
             for job in job_list:
-                if self._queue[job][1] == 'R':
-                    self.__print(f"job {job} is already running (cannot delete it)", 2)
+                if job in self._queue and self._queue[job][2].cancel():
+                    # if this mechanism ever fails or becomes cumbersome, 
+                    # we can always mark a job for deletion and handle it 
+                    # by ourselves in __run_local_job() (see previous commit)
+                    del self._queue[job]
                 else:
-                    self._queue[job][1] = 'd'
+                    self.__print(f"job '{job}' cannot be deleted", 2)
+
         except Exception as err:
             self.__print(err, 1)
 
@@ -153,9 +160,6 @@ class LocalJobExecutor(JobExecutor):
         # execute a job locally as a new subprocess
         try:
             self.__validate_job(JobInfo)
-            if self._queue[JobInfo['submit_id']][1] == 'd':
-                self.__print(f"job {JobInfo['submit_id']} was deleted", 3)
-                return 0
 
             env = os.environ.copy()
             env.update(PBS_JOBID=JobInfo['submit_id'])
@@ -184,7 +188,7 @@ class LocalJobExecutor(JobExecutor):
         submit_id = JobInfo['submit_id']
         if submit_id not in self._queue:
             raise Exception(f"non-existing job {submit_id}")
-        if len(self._queue[submit_id]) != 2:
+        if len(self._queue[submit_id]) != 3:
             raise Exception(f"bad queue entry {submit_id}: {self._queue[submit_id]}")
 
     def __print(self, string, verbose_level=3):
