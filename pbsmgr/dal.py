@@ -90,8 +90,7 @@ def init_db(conn):
 
 
 def pack_job(JobInfo):
-    if 'md5' in JobInfo:
-        del JobInfo['md5']
+    JobInfo.pop('md5', None)
     metadata = zlib.compress(pickle.dumps(JobInfo))
     JobInfo['md5'] = hashlib.md5(metadata).hexdigest()
     return metadata

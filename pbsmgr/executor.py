@@ -259,10 +259,8 @@ def update_fields(JobInfo, submit_id, Spawn):
 
         utils.dict_append(JobInfo, 'stdout', LogOut.format(**JobInfo))
         utils.dict_append(JobInfo, 'stderr', LogErr.format(**JobInfo))
-        if 'PBS_ID' in JobInfo:
-            del JobInfo['PBS_ID']
-        if 'qstat' in JobInfo:
-            del JobInfo['qstat']
+        JobInfo.pop('PBS_ID', None)
+        JobInfo.pop('qstat', None)
 
     elif JobInfo['state'] != 'spawn':
         JobInfo['state'] = 'spawn'
