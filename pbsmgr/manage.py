@@ -380,6 +380,8 @@ def set_complete(BatchID=None, JobIndex=None, JobInfo=None, Submit=False):
         JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True, ignore_spawn=True)
     JobInfo['qstat'] = get_qstat()
     JobInfo['state'] = 'complete'
+    for f in ['PBS_ID', 'submit_id']:
+        JobInfo.pop(f, None)
     dal.update_job(JobInfo, Release=True)
 
     if Submit:
