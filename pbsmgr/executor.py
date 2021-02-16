@@ -14,7 +14,8 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 import os
 import re
-from subprocess import run, check_output
+from subprocess import run, check_output, call
+import time
 
 from .config import PBS_ID, PBS_suffix, PBS_queue, DefResource, JobDir, LogOut, LogErr, \
         running_on_cluster
@@ -38,7 +39,7 @@ class JobExecutor(object):
             as values. """
         pass
 
-    def qdel(self, JobInfo):
+    def delete(self, JobInfo):
         pass
 
     def shutdown(self):
@@ -46,6 +47,7 @@ class JobExecutor(object):
 
 
 class ClusterJobExecutor(JobExecutor):
+    """ dummy subclass for server based clusters. """
     pass
 
 
@@ -81,6 +83,14 @@ class PBSJobExecutor(ClusterJobExecutor):
         update_fields(JobInfo, submit_id, Spawn)
 
         return submit_id
+
+    def delete(self, JobInfo):
+        for jid in dal.get_internal_ids(JobInfo):
+           if not call(['qdel', jid]):
+               dal.remove_internal_id(JobInfo, jid)
+               JobInfo['state'] = 'init'
+
+        dal.update_job(JobInfo)
 
     def qstat(self):
         Q = {}
@@ -122,42 +132,39 @@ class LocalJobExecutor(JobExecutor):
 
         submit_id = str(utils.get_id())
         update_fields(JobInfo, submit_id, Spawn)
-        res = self._pool.submit(self.__run_local_job, JobInfo)
+        self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q',
+                                  self._pool.submit(self.__run_local_job, JobInfo)]
         # we store a Future object with the result of the run in queue
-        self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q', res]
 
         return submit_id
 
-    def qstat(self):
-        return self._queue
-
-    def qdel(self, JobInfo):
+    def delete(self, JobInfo):
         try:
-            # handling running/submitted jobs/spawns by using both fields
-            job_list = []
-            if 'submit_id' in JobInfo:
-                job_list += utils.make_iter(JobInfo['submit_id'])
-            if 'PBS_ID' in JobInfo:
-                job_list += utils.make_iter(JobInfo['PBS_ID'])
-            job_list = list(set(job_list))  # unique
-
-            for job in job_list:
-                if job in self._queue and self._queue[job][2].cancel():
+            for jid in dal.get_internal_ids(JobInfo):
+                if jid in self._queue and self._queue[jid][2].cancel():
                     # if this mechanism ever fails or becomes cumbersome, 
                     # we can always mark a job for deletion and handle it 
                     # by ourselves in __run_local_job() (see previous commit)
-                    del self._queue[job]
+                    del self._queue[jid]
+                    dal.remove_internal_id(JobInfo, jid)
+                    JobInfo['state'] = 'init'
                 else:
-                    self.__print(f"job '{job}' cannot be deleted", 2)
+                    self.__print(f"job '{jid}' cannot be deleted", 2)
+
+            dal.update_job(JobInfo)
 
         except Exception as err:
-            self.__print(err, 1)
+            self.__print(f'delete failed with {type(err)}: {err}', 1)
+
+    def qstat(self):
+        return self._queue
 
     def shutdown(self, wait=True):
         self._pool.shutdown(wait=wait)
 
     def __run_local_job(self, JobInfo):
         # execute a job locally as a new subprocess
+        time.sleep(0.1)  # we need this delay to let self._queue update
         try:
             self.__validate_job(JobInfo)
 
@@ -220,10 +227,7 @@ class FileJobExecutor(JobExecutor):
 
         return submit_id
 
-    def qstat(self):
-        return self._queue
-
-    def qdel(self, JobInfo):
+    def delete(self, JobInfo):
         """ re-write script with one job omitted. """
         tag = f"{JobInfo['BatchID']}, {JobInfo['JobIndex']}"
         with open(self.path + '.tmp', 'w') as wid:
@@ -231,11 +235,18 @@ class FileJobExecutor(JobExecutor):
                 for line in rid.readlines():
                     if not tag in line:
                         wid.write(line)
+                    else:
+                        JobInfo['state'] = 'init'
 
         os.remove(self.path)
         os.rename(self.path + '.tmp', self.path)
         os.chmod(self.path, 0o744)
+        dal.remove_internal_id(JobInfo, [k for k, v in self._queue.items() if tag in v])
         self._queue = {k: v for k, v in self._queue.items() if tag not in v}
+        dal.update_job(JobInfo)
+
+    def qstat(self):
+        return self._queue
 
 
 def update_fields(JobInfo, submit_id, Spawn):

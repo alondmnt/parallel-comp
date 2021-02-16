@@ -153,7 +153,7 @@ def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
         else:
             # no update made to job in DB
             JobInfo.update(spawn_get_info(BatchID, JobIndex, PBS_ID=PBS_ID,
-                                        db_connection=db_connection))
+                                          db_connection=db_connection))
         return JobInfo
 
     # not spawn
@@ -388,3 +388,28 @@ def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1, Lines=None, RegEx
             if RegEx is not None and RegEx.search(line) is None:
                 continue
             print(line[:-1])
+
+
+def get_internal_ids(JobInfo, fields=['submit_id', 'PBS_ID']):
+    # handling running/submitted jobs/spawns by using both fields
+    job_list = []
+    for f in fields:
+        if f in JobInfo:
+            job_list += utils.make_iter(JobInfo[f])
+
+    return list(set(job_list))  # unique
+
+
+def remove_internal_id(JobInfo, jid, fields=['submit_id', 'PBS_ID']):
+    for f in fields:
+        if f not in JobInfo:
+            continue
+
+        for j in utils.make_iter(jid):
+            if JobInfo[f] == j:
+                del JobInfo[f]
+            elif type(JobInfo[f]) is list and j in JobInfo[f]:
+                JobInfo[f].remove(jid)
+
+        if f in JobInfo and not len(JobInfo[f]):
+            del JobInfo[f]

@@ -362,40 +362,15 @@ def qdel_batch(BatchID):
             qdel_job(JobInfo=job)
 
 
-def qdel_job(BatchID=None, JobIndex=None, JobInfo=None):
+def qdel_job(BatchID=None, JobIndex=None, JobInfo=None, Executor=DefaultJobExecutor):
     """ this will run the PBS qdel command on the given job. """
-    pid_keys = ['PBS_ID', 'submit_id']
-
     if JobInfo is None:
         JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True)
     if 'PBS_ID' not in JobInfo and 'submit_id' not in JobInfo:
         print('qdel_job: unknown PBS_ID for {BatchID},{JobIndex}'.format(**JobInfo))
         return
 
-    pid_list = []
-    for k in pid_keys:
-        if k in JobInfo:
-            JobInfo[k] = utils.make_iter(JobInfo[k])
-            pid_list += [j for j in JobInfo[k] if j not in pid_list]
-
-    for pid in pid_list:
-        if not subprocess.call(['qdel', pid]):  # success
-            for k in pid_keys:
-                if k in JobInfo:
-                    try:
-                        JobInfo[k].remove(pid)
-                    except ValueError:
-                        pass
-
-    for k in pid_keys:
-        if k in JobInfo and len(JobInfo[k]) == 1:  # back to single ID
-            JobInfo[k] = JobInfo[k][0]
-        if k in JobInfo and not len(JobInfo[k]):  # all deleted
-            del JobInfo[k]
-#            if k == 'submit_id':
-            JobInfo['state'] = 'init'
-
-    dal.update_job(JobInfo, Release=True)
+    Executor.delete(JobInfo)
 
 
 ### SET JOB STATES AND SUCH ###
