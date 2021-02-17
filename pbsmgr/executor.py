@@ -156,7 +156,7 @@ class LocalJobExecutor(JobExecutor):
         OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
         os.makedirs(OutDir, exist_ok=True)
 
-        submit_id = str(utils.get_id())
+        submit_id = str(int(10**3*time.time() % 10**10))
         update_fields(JobInfo, submit_id, Spawn)
         self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q',
                                   self._pool.submit(self.__run_local_job, JobInfo)]
@@ -244,7 +244,7 @@ class FileJobExecutor(JobExecutor):
     def submit(self, JobInfo, Spawn):
         if Spawn:
             raise Exception('FileJobExecutor does not support spawn jobs.')
-        submit_id = utils.get_id()
+        submit_id = int(10**3*time.time() % 10**10)
         with open(self.path, 'a') as fid:
             fid.write(JobInfo['script'] +
                       f"  # ({JobInfo['BatchID']}, {JobInfo['JobIndex']})\n")
