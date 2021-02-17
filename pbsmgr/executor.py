@@ -34,13 +34,18 @@ class JobExecutor(object):
             must return submit_id or 'failed'. """
         pass
 
+    def delete(self, JobInfo):
+        pass
+
     def qstat(self):
         """ returns a dict with PBS_IDs as keys and [name, state in {'R','Q'}]
             as values. """
         pass
 
-    def delete(self, JobInfo):
-        pass
+    def job_summary(self, PBS_ID=PBS_ID):
+        """ returns a dict with any fields describing the job state
+            (time, resources, etc.). """
+        return {}
 
     def shutdown(self):
         pass
@@ -108,6 +113,27 @@ class PBSJobExecutor(ClusterJobExecutor):
                 line = line_parse.split(line)
                 Q[job.group(1)] = [line[3], line[9]]
         return Q
+
+    def job_summary(self, PBS_ID=PBS_ID):
+        if PBS_ID is None:
+            print('job_summary: not running on a cluster node.')
+            return {}
+        try:
+            return self.__parse_qstat(check_output(['qstat', '-f', PBS_ID]))
+        except Exception as e:
+            # sometimes this fails on cluster, not clear why (cluster does not recognize the BatchID)
+            print(e)
+            return None
+
+    def __parse_qstat(text):
+        JobInfo = {}
+        text = text.decode('utf-8')
+        line_parse = re.compile(r'([\w.]*) = ([\w\s:_\-/]*)')
+        for line in text.splitlines():
+            hit = line_parse.match(line.strip())
+            if hit is not None:
+                JobInfo[hit.group(1)] = hit.group(2)
+        return JobInfo
 
 
 class LocalJobExecutor(JobExecutor):

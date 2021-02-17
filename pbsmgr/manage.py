@@ -150,27 +150,8 @@ def get_sql_queue(Filter='', db_connection=None):
                .tolist()).to_dict()
 
 
-def get_qstat(BatchID=PBS_ID):
-    if BatchID is None:
-        print('get_qstat: not running on a cluster node.')
-        return {}
-    try:
-        return parse_qstat(subprocess.check_output(['qstat', '-f', BatchID]))
-    except Exception as e:
-        # sometimes this fails on cluster, not clear why (cluster does not recognize the BatchID)
-        print(e)
-        return None
-
-
-def parse_qstat(text):
-    JobInfo = {}
-    text = text.decode('utf-8')
-    line_parse = re.compile(r'([\w.]*) = ([\w\s:_\-/]*)')
-    for line in text.splitlines():
-        hit = line_parse.match(line.strip())
-        if hit is not None:
-            JobInfo[hit.group(1)] = hit.group(2)
-    return JobInfo
+def get_qstat(PBS_ID=PBS_ID, Executor=DefaultJobExecutor):
+    return Executor.job_summary(PBS_ID)
 
 
 ### SUBMIT FUNCTIONS ###
