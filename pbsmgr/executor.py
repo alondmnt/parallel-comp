@@ -117,7 +117,7 @@ class PBSJobExecutor(ClusterJobExecutor):
 
     def qstat(self):
         Q = {}
-        if not running_on_cluster:
+        if not self.isconnected():
             print('get_pbs_queue: not running on cluster.')
             return Q
         data = check_output(['qstat', '-u', os.environ['USER']],
@@ -165,14 +165,14 @@ class PBSJobExecutor(ClusterJobExecutor):
 class LocalJobExecutor(JobExecutor):
     """ returns a pool executer with a submit method.
         currently using ThreadPoolExecutor to start new subprocesses. """
-    def __init__(self, max_workers=os.cpu_count(), verbose=2):
+    def __init__(self, max_workers=os.cpu_count(), submitter=False, verbose=2):
         """ verbose level 1 is for muted exceptions, 2 is for warnings, 
             3 is for debugging logs. """
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
         self._queue = OrderedDict()
         self.verbose = verbose
 
-        if 'PBS_JOBID' in os.environ:
+        if 'PBS_JOBID' in os.environ and not submitter:
             self.job_id = os.environ['PBS_JOBID'].replace(PBS_suffix, '')
         else:
             self.job_id = 'pbsmgr'
@@ -270,7 +270,7 @@ class LocalJobExecutor(JobExecutor):
 
 class FileJobExecutor(JobExecutor):
     """ writes calls to job scripts into a shell script. """
-    def __init__(self, script_file):
+    def __init__(self, script_file, submitter=False):
         self.path = script_file
         self._queue = OrderedDict()
 
@@ -282,11 +282,21 @@ class FileJobExecutor(JobExecutor):
             fid.write('#!/bin/bash\n\n')
         os.chmod(self.path, 0o744)
 
+        if 'PBS_JOBID' in os.environ and not submitter:
+            self.job_id = os.environ['PBS_JOBID'].replace(PBS_suffix, '')
+        else:
+            self.job_id = 'pbsmgr'
+
+        self.connected_to_cluster = True
+
     def submit(self, JobInfo, Spawn):
-        if Spawn:
-            raise Exception('FileJobExecutor does not support spawn jobs.')
-        submit_id = int(10**3*time.time() % 10**10)
+        if self.job_id != 'pbsmgr':
+            print('cannot submit from within a job. PBS_ID must be set to "pbsmgr".')
+            return 'failed'
+
+        submit_id = str(int(10**3*time.time() % 10**10))
         with open(self.path, 'a') as fid:
+            fid.write(f'export PBS_JOBID={submit_id}\n')
             fid.write(JobInfo['script'] +
                       f"  # ({JobInfo['BatchID']}, {JobInfo['JobIndex']})\n")
         update_fields(JobInfo, submit_id, Spawn)
@@ -314,6 +324,12 @@ class FileJobExecutor(JobExecutor):
 
     def qstat(self):
         return self._queue
+
+    def get_job_id(self):
+        return self.job_id
+
+    def isconnected(self):
+        return self.connected_to_cluster
 
 
 def update_fields(JobInfo, submit_id, Spawn):
