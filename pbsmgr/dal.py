@@ -20,7 +20,7 @@ import zlib
 
 import pandas as pd
 
-from .config import QFile, WriteTries, LogOut, LogErr, PBS_ID, hostname
+from .config import QFile, WriteTries, LogOut, LogErr, hostname
 from . import utils
 
 
@@ -125,7 +125,7 @@ def get_batch_info(BatchID, db_connection=None):
 
 def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
                  db_connection=None, enforce_unique_job=True, ignore_spawn=False,
-                 PBS_ID=PBS_ID):
+                 PBS_ID=None):
     """ HoldFile is ignored but kept for backward compatibility. """
     conn = open_db(db_connection)
     job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE

@@ -19,7 +19,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from .config import QFile, JobDir, LocalRun, WriteTries, PBS_ID, running_on_cluster
+from .config import JobDir, LocalRun, WriteTries
 from . import utils
 from . import dal
 from . import executor
@@ -29,6 +29,7 @@ if LocalRun:
 else:
     DefaultJobExecutor = executor.PBSJobExecutor()
 
+PBS_ID = DefaultJobExecutor.get_job_id()
 
 ### QUEUE FUNCTIONS ###
 
@@ -151,7 +152,7 @@ def get_sql_queue(Filter='', db_connection=None):
 
 
 def get_qstat(PBS_ID=PBS_ID, Executor=DefaultJobExecutor):
-    return Executor.job_summary(PBS_ID)
+    return Executor.get_job_summary(PBS_ID)
 
 
 ### SUBMIT FUNCTIONS ###
@@ -163,9 +164,8 @@ def submit_jobs(Executor=DefaultJobExecutor, MaxJobs=None, MinPrior=0,
         ForceSubmit ignores another process currently submitting jobs (or an
         abandoned lock file).
         Filter are SQL query conditions that get_queue() accepts. """
-    submit_to_cluster = isinstance(Executor, executor.ClusterJobExecutor)
-    if not running_on_cluster and submit_to_cluster:
-        print('submit_jobs: not running on cluster.')
+    if not Executor.isconnected():
+        print('submit_jobs: not connected to cluster.')
         return
 
     lock_file = JobDir + 'submitting'
@@ -261,7 +261,7 @@ def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor, Spawn=False,
     for j in utils.make_iter(JobIndex):
         conn = dal.open_db()
         job = dal.get_job_info(BatchID, j, HoldFile=True, ignore_spawn=True,
-                               db_connection=conn)
+                               db_connection=conn, PBS_ID=PBS_ID)
         print('submiting:\t{}'.format(job['script']))
         if job['state'] in ['submit', 'run']:
             warnings.warn('already submitted')
@@ -296,7 +296,8 @@ def spawn_submit(JobInfo, N):
         submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
 
     # update current job with spawn ID
-    return dal.get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'], SetID=True)
+    return dal.get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'],
+                            SetID=True, PBS_ID=PBS_ID)
 
 
 def spawn_resubmit(BatchID, JobIndex, Executor=DefaultJobExecutor,
@@ -346,7 +347,7 @@ def qdel_batch(BatchID):
 def qdel_job(BatchID=None, JobIndex=None, JobInfo=None, Executor=DefaultJobExecutor):
     """ this will run the PBS qdel command on the given job. """
     if JobInfo is None:
-        JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True)
+        JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True, PBS_ID=PBS_ID)
     if 'PBS_ID' not in JobInfo and 'submit_id' not in JobInfo:
         print('qdel_job: unknown PBS_ID for {BatchID},{JobIndex}'.format(**JobInfo))
         return
@@ -358,7 +359,8 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None, Executor=DefaultJobExecu
 
 def set_complete(BatchID=None, JobIndex=None, JobInfo=None, Submit=False):
     if JobInfo is None:
-        JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True, ignore_spawn=True)
+        JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True,
+                                   ignore_spawn=True, PBS_ID=PBS_ID)
     JobInfo['qstat'] = get_qstat()
     JobInfo['state'] = 'complete'
     for f in ['PBS_ID', 'submit_id']:
@@ -416,7 +418,7 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
         try:
             conn = dal.open_db(db_connection)
             JobInfo = dal.get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'],
-                                       db_connection=conn)
+                                       db_connection=conn, PBS_ID=PBS_ID)
             if JobInfo['state'] != 'spawn':
                 # must not leave function with an ambiguous state in JobInfo
                 # e.g., if job has been re-submitted by some one/job

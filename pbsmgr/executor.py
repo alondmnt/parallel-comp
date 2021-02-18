@@ -17,8 +17,8 @@ import re
 from subprocess import run, check_output, call
 import time
 
-from .config import PBS_ID, PBS_suffix, PBS_queue, DefResource, JobDir, LogOut, LogErr, \
-        running_on_cluster
+from .config import PBS_suffix, PBS_queue, DefResource, JobDir, LogOut, LogErr, \
+        ServerHost, hostname
 from . import dal
 from . import utils
 
@@ -32,7 +32,7 @@ class JobExecutor(object):
         """ submits the job to some executor, updates the following fields: 
             submit_id, subtime, state.
             must return submit_id or 'failed'. """
-        pass
+        return 'failed'
 
     def delete(self, JobInfo):
         pass
@@ -40,12 +40,20 @@ class JobExecutor(object):
     def qstat(self):
         """ returns a dict with PBS_IDs as keys and [name, state in {'R','Q'}]
             as values. """
-        pass
+        return {}
 
-    def job_summary(self, PBS_ID=PBS_ID):
+    def get_job_id(self):
+        """ returns the job ID assigned by the cluster. """
+        return None
+
+    def get_job_summary(self, PBS_ID=None):
         """ returns a dict with any fields describing the job state
             (time, resources, etc.). """
         return {}
+
+    def isconnected(self):
+        """ whether we're connected to the cluster and can submit. """
+        return
 
     def shutdown(self):
         pass
@@ -64,6 +72,16 @@ class PBSJobExecutor(ClusterJobExecutor):
         self.queue = queue
         self.resources = resources
         self.id_suffix = id_suffix
+
+        if 'PBS_JOBID' in os.environ:
+            self.job_id = os.environ['PBS_JOBID'].replace(PBS_suffix, '')
+        else:
+            self.job_id = None
+
+        if (self.job_id is not None) or (ServerHost in hostname):
+            self.connected_to_cluster = True
+        else:
+            self.connected_to_cluster = False
 
     def submit(self, JobInfo, Spawn=False):
         ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
@@ -114,9 +132,14 @@ class PBSJobExecutor(ClusterJobExecutor):
                 Q[job.group(1)] = [line[3], line[9]]
         return Q
 
-    def job_summary(self, PBS_ID=PBS_ID):
+    def get_job_id(self):
+        return self.job_id
+
+    def get_job_summary(self, PBS_ID=None):
         if PBS_ID is None:
-            print('job_summary: not running on a cluster node.')
+            PBS_ID = self.job_id
+        if PBS_ID is None:
+            print('get_job_summary: not running on a cluster node.')
             return {}
         try:
             return self.__parse_qstat(check_output(['qstat', '-f', PBS_ID]))
@@ -124,6 +147,9 @@ class PBSJobExecutor(ClusterJobExecutor):
             # sometimes this fails on cluster, not clear why (cluster does not recognize the BatchID)
             print(e)
             return None
+
+    def isconnected(self):
+        return self.connected_to_cluster
 
     def __parse_qstat(text):
         JobInfo = {}
@@ -146,8 +172,15 @@ class LocalJobExecutor(JobExecutor):
         self._queue = OrderedDict()
         self.verbose = verbose
 
+        if 'PBS_JOBID' in os.environ:
+            self.job_id = os.environ['PBS_JOBID'].replace(PBS_suffix, '')
+        else:
+            self.job_id = 'pbsmgr'
+
+        self.connected_to_cluster = True
+
     def submit(self, JobInfo, Spawn=False):
-        if PBS_ID != 'pbsmgr':
+        if self.job_id != 'pbsmgr':
             self.__print('cannot submit from a subprocess. PBS_ID must be set to "pbsmgr".', 2)
             return 'failed'
 
@@ -184,6 +217,12 @@ class LocalJobExecutor(JobExecutor):
 
     def qstat(self):
         return self._queue
+
+    def get_job_id(self):
+        return self.job_id
+
+    def isconnected(self):
+        return self.connected_to_cluster
 
     def shutdown(self, wait=True):
         self._pool.shutdown(wait=wait)
@@ -234,6 +273,8 @@ class FileJobExecutor(JobExecutor):
     def __init__(self, script_file):
         self.path = script_file
         self._queue = OrderedDict()
+
+        # init execution script
         if os.path.dirname(self.path):
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
         with open(self.path, 'w') as fid:

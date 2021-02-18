@@ -9,6 +9,7 @@ this submodule contains all configurable variables.
 Created on Wed Mar 18 22:45:50 2015
 """
 import os
+import socket
 
 LocalRun = True  # instead of submitting to cluster, run on local machine
 ServerHost = 'tau.ac.il'
@@ -38,22 +39,5 @@ JobTemplate =   {'BatchID': None,
 
 # automatically-set variables
 
-if 'PBS_JOBID' in os.environ:
-    # this also serves as a sign that we're running on cluster
-    PBS_ID_raw = os.environ['PBS_JOBID']
-    PBS_ID = PBS_ID_raw.replace(PBS_suffix, '')
-elif LocalRun:
-    PBS_ID_raw = 'pbsmgr'
-    PBS_ID = 'pbsmgr'
-else:
-    PBS_ID_raw = None
-    PBS_ID = None
-if 'HOSTNAME' in os.environ:
-    hostname = os.environ['HOSTNAME']
-else:
-    hostname = []
-if ((PBS_ID is not None) or (ServerHost in hostname)) and not LocalRun:
-    running_on_cluster = True
-else:
-    running_on_cluster = False
+hostname = socket.gethostname()
 LocalPath = os.path.splitdrive(os.path.abspath('.'))[1]
