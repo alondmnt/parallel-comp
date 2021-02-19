@@ -98,14 +98,16 @@ def add_batch_to_queue(BatchID, Jobs, set_index=False, build_script=False):
           len(Jobs), dal.QFile))
 
 
-def add_job_to_queue(Jobs, set_index=False, build_script=False):
+def add_job_to_queue(job_list, set_index=False, build_script=False):
     """ job info or a list of job info dicts supported.
         automatically sets the JobIndex id in each JobInfo,
         and saves the metdata. """
+    if type(job_list) is not list:
+        job_list = [job_list]
 
     conn = dal.open_db()
     batch_index = {}
-    for job in utils.make_iter(Jobs):
+    for job in job_list:
         BatchID = job['BatchID']
 
         if BatchID not in batch_index:
