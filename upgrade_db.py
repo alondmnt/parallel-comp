@@ -12,24 +12,24 @@ import os
 import pickle
 import sqlite3
 
-import pbsmgr as pbs
+import paraschut as psu
 
 
-def run(db_path=pbs.QFile):
+def run(db_path=psu.QFile):
     with connect(db_path, exists_OK=False) as conn:
-        pbs.init_db(conn)
+        psu.init_db(conn)
     populate_db(db_path)
 
 
 def connect(QFile, exists_OK=True, **kwargs):
     db_file = '.'.join(QFile.split('.')[:-1] + ['db'])
-    pbs.QFile = db_file
+    psu.QFile = db_file
     if os.path.isfile(db_file) and not exists_OK:
         raise Exception(f'database "{db_file}" already exist')
     return sqlite3.connect(db_file, **kwargs)
 
 
-def populate_db(QFile=pbs.QFile):
+def populate_db(QFile=psu.QFile):
     """ add all currently queued jobs to new DB. """
 
     conn = connect(QFile, exists_OK=True)
@@ -38,7 +38,7 @@ def populate_db(QFile=pbs.QFile):
     for batch_id, batch in Q.items():
         for job in batch:
             upgrade_job(job)            
-            metadata = pbs.pack_job(job)
+            metadata = psu.pack_job(job)
             conn.execute("""INSERT INTO job(JobIndex, BatchID, state,
                                             priority, metadata, md5)
                             VALUES (?,?,?,?,?,?)""",
@@ -54,7 +54,7 @@ def populate_db(QFile=pbs.QFile):
     conn.close()
 
     # test new DB
-    reconstructed_Q = pbs.get_sql_queue('.'.join(QFile.split('.')[:-1] + ['db']))
+    reconstructed_Q = psu.get_sql_queue('.'.join(QFile.split('.')[:-1] + ['db']))
     assert all([json.dumps(reconstructed_Q[b], default=set_default) == 
                 json.dumps(Q[b], default=set_default)
                 for b in Q])
