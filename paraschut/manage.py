@@ -116,7 +116,7 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
     # Verbose=True
     print('\nmissing jobs: {}'.format(missing))
     cnt['complete'] += cnt['collected']
-    print('\ntotal jobs on PBS queue: {}'.format(len(Q_server)))
+    print('\ntotal jobs on server queue: {}'.format(len(Q_server)))
     try:
          print('running/complete/total: {online}/{complete}/{total}'.format(**cnt))
     except:
