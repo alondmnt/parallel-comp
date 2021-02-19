@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-a PBS (portable batch system) parallel-computing job manager.
+PARASCHUT: parallel job scheduling utils.
 see also: README.md, example.ipynb
 
 this submodule handles via a unified API the execution of jobs 

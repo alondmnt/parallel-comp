@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-a PBS (portable batch system) parallel-computing job manager.
+PARASCHUT: parallel job scheduling utils.
 see also: README.md, example.ipynb
 
 this submodule handles job submission and monitoring.
@@ -10,9 +10,7 @@ Created on Wed Mar 18 22:45:50 2015
 """
 from collections import Counter
 import os
-import re
 import shutil
-import subprocess
 import time
 import warnings
 
@@ -280,7 +278,7 @@ def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor, Spawn=False,
         dal.close_db(conn)
 
 
-def spawn_submit(JobInfo, N):
+def spawn_submit(JobInfo, N, Executor=DefaultJobExecutor):
     """ run the selected job multiple times in parallel. job needs to handle
         'spawn' state for correct logic: i.e., only last job to complete
         updates additional fields in JobInfo and sets it to 'complete'.
@@ -293,7 +291,8 @@ def spawn_submit(JobInfo, N):
     dal.spawn_add_to_db(JobInfo['BatchID'], JobInfo['JobIndex'], PBS_ID)
 
     for _ in range(N):
-        submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'], Spawn=True)
+        submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'],
+                       Spawn=True, Executor=Executor)
 
     # update current job with spawn ID
     return dal.get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'],

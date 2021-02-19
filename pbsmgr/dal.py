@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-a PBS (portable batch system) parallel-computing job manager.
+PARASCHUT: parallel job scheduling utils.
 see also: README.md, example.ipynb
 
 this submodule handles database access.
@@ -123,10 +123,12 @@ def get_batch_info(BatchID, db_connection=None):
     return [unpack_job(job) for job in batch_query]
 
 
-def get_job_info(BatchID, JobIndex, HoldFile=False, SetID=False,
+def get_job_info(BatchID, JobIndex, SetID=False, PBS_ID=None,
                  db_connection=None, enforce_unique_job=True, ignore_spawn=False,
-                 PBS_ID=None):
-    """ HoldFile is ignored but kept for backward compatibility. """
+                 HoldFile=False):
+    """ HoldFile is ignored but kept for backward compatibility.
+        PBS_ID is a required argument when SetID=True or when handling
+        a spawn job, but otherwise it's not necessary. """
     conn = open_db(db_connection)
     job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
                                       BatchID={BatchID} AND
