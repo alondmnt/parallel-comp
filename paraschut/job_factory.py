@@ -16,7 +16,7 @@ import pickle
 import shutil
 import time
 
-from .config import JobTemplate, JobDir, QFile, TempFiles
+from .config import JobTemplate, JobDir, TempFiles
 from . import dal
 from . import manage
 from . import utils
@@ -95,7 +95,7 @@ def add_batch_to_queue(BatchID, Jobs, set_index=False, build_script=False):
 
     add_job_to_queue(Jobs, set_index=set_index, build_script=build_script)
     print('\nbatch {} (size {:,d}) added to queue ({})'.format(BatchID,
-          len(Jobs), QFile))
+          len(Jobs), dal.QFile))
 
 
 def add_job_to_queue(Jobs, set_index=False, build_script=False):

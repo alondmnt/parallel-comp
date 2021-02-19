@@ -13,8 +13,8 @@ import socket
 
 LocalRun = True  # instead of submitting to cluster, run on local machine
 ServerHost = 'tau.ac.il'
-QFile = 'job_queue.db'  # T:/dalon/RP/Consistency/jobs/
-JobDir = 'jobs/'  # ../jobs/
+QFile = 'example/job_queue.db'
+JobDir = 'example/'
 PBS_suffix = '.power8.tau.ac.il'
 LogDir = JobDir + '{BatchID}/logs/{submit_id}' + PBS_suffix
 LogOut = LogDir + '.OU'  # template
