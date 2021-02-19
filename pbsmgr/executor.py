@@ -289,7 +289,7 @@ class FileJobExecutor(JobExecutor):
 
         self.connected_to_cluster = True
 
-    def submit(self, JobInfo, Spawn):
+    def submit(self, JobInfo, Spawn=False):
         if self.job_id != 'pbsmgr':
             print('cannot submit from within a job. PBS_ID must be set to "pbsmgr".')
             return 'failed'
