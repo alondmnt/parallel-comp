@@ -151,7 +151,7 @@ class PBSJobExecutor(ClusterJobExecutor):
     def isconnected(self):
         return self.connected_to_cluster
 
-    def __parse_qstat(text):
+    def __parse_qstat(self, text):
         JobInfo = {}
         text = text.decode('utf-8')
         line_parse = re.compile(r'([\w.]*) = ([\w\s:_\-/]*)')
