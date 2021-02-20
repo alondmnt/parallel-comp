@@ -1,6 +1,6 @@
 # PARASCHUT: PARAllel SCHeduling UTils
 
-`paraschut` is a job management package. it is used to submit and monitor jobs, locally or on a server. currently, it supports PBS (portable batch system), and can be easily extended to other HPC cluster systems (such as ParallelCluster, SGE, Torque, Slurm, condor, etc.). conveniently, it can also turn your local machine into a small cluster by managing multi-processses via the same API. it is de-centralized (does not require a dedicated node running as a server), based on SQLite, controls the execution flow of inter-dependent jobs, handles job errors, and manipulates job parameters at scale.
+`paraschut` is a job management package. it is used to submit and monitor jobs, locally or on a server. currently, it supports PBS (portable batch system), and can be easily [extended](#extending-to-other-job-schedulers) to other HPC cluster systems (such as ParallelCluster, SGE, Torque, Slurm, condor, etc.). conveniently, it can also turn your local machine into a small cluster by managing multi-processses via the same API. it is de-centralized (does not require a dedicated node running as a server), based on SQLite, controls the execution flow of inter-dependent jobs, handles job errors, and manipulates job parameters at scale.
 
 see also the Jupyter notebook [example.ipynb](example.ipynb).
 
