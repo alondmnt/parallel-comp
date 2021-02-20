@@ -1,6 +1,6 @@
-# PARASCHUT: PARAllel job SCHeduling UTils
+# PARASCHUT: PARAllel SCHeduling UTils
 
-`paraschut` is a job management package. it is used to submit and monitor jobs, locally or on a server. currently, it supports PBS (portable batch system), and can be easily extended to other HPC cluster systems (such as ParallelCluster, SGE, Torque, Slurm, condor, etc.). conveniently, it can also turn your local machine into a small cluster by managing multi-processses via the same API. it is de-centralized (does not require a dedicated node running as a server), based on SQLite, controls the execution flow of inter-dependent jobs, handle job errors, and manipulates job parameters at scale.
+`paraschut` is a job management package. it is used to submit and monitor jobs, locally or on a server. currently, it supports PBS (portable batch system), and can be easily extended to other HPC cluster systems (such as ParallelCluster, SGE, Torque, Slurm, condor, etc.). conveniently, it can also turn your local machine into a small cluster by managing multi-processses via the same API. it is de-centralized (does not require a dedicated node running as a server), based on SQLite, controls the execution flow of inter-dependent jobs, handles job errors, and manipulates job parameters at scale.
 
 see also the Jupyter notebook [example.ipynb](example.ipynb).
 
@@ -33,7 +33,7 @@ job metadata is kept in a dictionary, such as the one in the following example. 
 
 note the 'priority' field and its score. jobs are submitted in priority groups in descending order. first, all jobs within a batch with the highest priority score will be submitted. the next-ranked priority group will be submitted only once they have successfully completed, and so on. this allows one, for example, to separate the execution of a Map step and a Reduce step when implementing a MapReduce workflow. the absolute scores assigned as priorities can be arbitrary as long as they are ordered, with one exception: jobs with priorities that exceed 100 are globally prioritized - across all batches (the top ones are submitted before any other job in any other batch is). future versions may implement more elaborate dependencies between jobs.
 
-note, that some system-specific definitions appear in `config.py`. for example, in order to use your machine as local cluster, set LocalRun there to True.
+NOTE, that some system-specific definitions appear in `config.py`. for example, in order to use your machine as local cluster, set LocalRun there to True.
 
 ## user API
 
@@ -184,4 +184,4 @@ the following functions are useful to create and use jobs from within scripts an
 
 ## extending to other job schedulers
 
-`paraschut` uses a generalized JobExecutor class for managing jobs. currently 3 JobExecutors are implemented: PBSJobExecutor, LocalJobExecutor, and FileJobExecutor. PBSJobExecutor, for example, is a simple wrapper for the `qsub`, `qstat`, and `qdel` commands in PBS. potentially, a wrapper for any other job scheduler can be added as a new class and given as an argument to `submit_jobs`, `get_queue`, and other relevant functions.
+`paraschut` uses a generalized JobExecutor class for managing jobs. currently 3 JobExecutors are implemented: PBSJobExecutor, LocalJobExecutor, and FileJobExecutor. PBSJobExecutor, for example, is a simple wrapper for the `qsub`, `qstat`, and `qdel` commands in PBS. potentially, a wrapper for any other job scheduler can be added as a new subclass and given as an argument to `submit_jobs`, `get_queue`, and other relevant functions.
