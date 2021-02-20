@@ -23,7 +23,7 @@ def get_id():
 
 
 def make_iter(var):
-    if type(var) == str:
+    if type(var) in [str, dict]:
         var = [var]
     try:
         iter(var)
