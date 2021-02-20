@@ -14,7 +14,6 @@ from glob import iglob
 import os
 import pickle
 import shutil
-import time
 
 from .config import JobTemplate, JobDir, TempFiles
 from . import dal
