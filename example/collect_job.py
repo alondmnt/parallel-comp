@@ -22,11 +22,10 @@ def main(args):
 
     jobinfo = psu.get_job_info(BatchID, JobIndex, SetID=True, PBS_ID=psu.PBS_ID)
 
-    data = pkl.load(open(jobinfo['data'], 'rb'))
+    data = [psu.get_job_info(BatchID, j)['result'] for j in jobinfo['data']]
     res = np.mean(data)
     jobinfo['result'] = res
     print(res)
-    sleep(30)
 
     psu.set_complete(JobInfo=jobinfo, Submit=True)
 
