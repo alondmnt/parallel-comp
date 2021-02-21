@@ -175,13 +175,13 @@ class LocalJobExecutor(JobExecutor):
         if 'PBS_JOBID' in os.environ and not submitter:
             self.job_id = os.environ['PBS_JOBID'].replace(PBS_suffix, '')
         else:
-            self.job_id = 'pbsmgr'
+            self.job_id = 'paraschut'
 
         self.connected_to_cluster = True
 
     def submit(self, JobInfo, Spawn=False):
-        if self.job_id != 'pbsmgr':
-            self.__print('cannot submit from a subprocess. PBS_ID must be set to "pbsmgr".', 2)
+        if self.job_id != 'paraschut':
+            self.__print('cannot submit from a subprocess. PBS_ID must be set to "paraschut".', 2)
             return 'failed'
 
         ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
@@ -285,13 +285,13 @@ class FileJobExecutor(JobExecutor):
         if 'PBS_JOBID' in os.environ and not submitter:
             self.job_id = os.environ['PBS_JOBID'].replace(PBS_suffix, '')
         else:
-            self.job_id = 'pbsmgr'
+            self.job_id = 'paraschut'
 
         self.connected_to_cluster = True
 
     def submit(self, JobInfo, Spawn=False):
-        if self.job_id != 'pbsmgr':
-            print('cannot submit from within a job. PBS_ID must be set to "pbsmgr".')
+        if self.job_id != 'paraschut':
+            print('cannot submit from within a job. PBS_ID must be set to "paraschut".')
             return 'failed'
 
         submit_id = str(int(10**3*time.time() % 10**10))

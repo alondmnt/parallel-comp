@@ -178,7 +178,7 @@ def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None,
     fields = ['SpawnID', 'PBS_ID', 'spawn_state', 'stdout', 'stderr']
     condition = f'BatchID={BatchID} AND JobIndex={JobIndex}'
     max_query_size = None
-    if (PBS_ID is not None) and (PBS_ID != 'pbsmgr') and (len(PBS_ID) > 0):
+    if (PBS_ID is not None) and (PBS_ID != 'paraschut') and (len(PBS_ID) > 0):
         condition += f' AND PBS_ID="{PBS_ID}"'
         max_query_size = 1
 
