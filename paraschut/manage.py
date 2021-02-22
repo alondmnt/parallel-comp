@@ -82,10 +82,13 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
             # (for online and crashed jobs)
             found_id = False
             for pid in utils.make_iter(job['PBS_ID']):
-                if pid in Q_server and Q_server[pid][1] == 'R':
-                    job_index = str(job_index) + '*'
-                    cnt['online'] += 1
-                    found_id = True
+                if pid in Q_server:
+                    if Q_server[pid][1] == 'R':
+                        job_index = str(job_index) + '*'
+                        cnt['online'] += 1
+                        found_id = True
+                    elif Q_server[pid][1] == 'Q':
+                        found_id = True
 
             if not found_id and job['state'] in maybe_online:
                 utils.dict_append(missing, BatchID, job_index)
