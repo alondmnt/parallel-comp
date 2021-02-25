@@ -100,7 +100,7 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
             if Display is not None:
                 state = {s: p for s, p in state.items() if s in Display}
             if len(state) > 0:
-                print('\n{}: {}'.format(BatchID, '/'.join(job['name'])))
+                print('\n{}: {}'.format(BatchID, '/'.join(utils.make_iter(job['name']))))
                 print(state)
 
     dal.close_db(conn)

@@ -71,8 +71,8 @@ def generate_data(JobInfo, Data):
         example:
         vec = np.ones(10**6)
         JobInfo = generate_data(JobInfo, vec) """
-    JobInfo['data'] = '{}/{}/data_{}.pkl'.format(JobDir, JobInfo['BatchID'],
-                                                 JobInfo['JobIndex'])
+    JobInfo['data'] = os.path.join(JobDir, str(JobInfo['BatchID']),
+                                   'data_{}.pkl'.format(JobInfo['JobIndex']))
     if not os.path.isdir(os.path.dirname(JobInfo['data'])):
         os.makedirs(os.path.dirname(JobInfo['data']))
     pickle.dump(Data, open(JobInfo['data'], 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
@@ -112,7 +112,7 @@ def add_job_to_queue(job_list, set_index=False, build_script=False):
             # init new batch
             conn.execute("""INSERT INTO batch
                             VALUES (?,?,?)""",
-                            [BatchID, '/'.join(job['name']),
+                            [BatchID, '/'.join(utils.make_iter(job['name'])),
                              job['data_type']])
 
         if set_index:

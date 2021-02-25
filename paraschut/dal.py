@@ -379,7 +379,7 @@ def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1, Lines=None, RegEx
         return
 
     print('\n\n[[[{} log for {}/{}/job_{}:]]]\n'.format(LogKey, BatchID,
-          '/'.join(JobInfo['name']), JobIndex))
+          '/'.join(utils.make_iter(JobInfo['name'])), JobIndex))
     with open(LogFile, 'r') as fid:
         if type(RegEx) is str:
             RegEx = re.compile(RegEx)
