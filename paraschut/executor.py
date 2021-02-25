@@ -90,17 +90,24 @@ class PBSJobExecutor(ClusterJobExecutor):
         os.makedirs(OutDir, exist_ok=True)
 
         # build command
-        Qsub = ['qsub', '-q', self.queue, '-e', ErrDir, '-o', OutDir, '-l']
+        Qsub = ['qsub']
+        if 'queue' in JobInfo and JobInfo['queue'] is not None:
+            Qsub += ['-q', JobInfo['queue']]
+        elif self.queue is not None:
+            Qsub += ['-q', self.queue]
+        if ErrDir is not None:
+            Qsub += ['-e', ErrDir]
+        if OutDir is not None:
+            Qsub += ['-o', OutDir]
         if 'resources' in JobInfo:
             this_res = JobInfo['resources']
         else:
             this_res = self.resources
-        this_sub = Qsub + [','.join(['{}={}'.format(k, v)
-                           for k, v in sorted(this_res.items())])]
-        if 'queue' in JobInfo:
-            this_sub[2] = JobInfo['queue']
+        if this_res is not None:
+            Qsub += ['-l'] + [','.join(['{}={}'.format(k, v)
+                              for k, v in sorted(this_res.items())])]
 
-        submit_id_raw = check_output(this_sub + [JobInfo['script']])\
+        submit_id_raw = check_output(Qsub + [JobInfo['script']])\
                 .decode('UTF-8').replace('\n', '')
         submit_id = submit_id_raw.replace(self.id_suffix, '')
         update_fields(JobInfo, submit_id, Spawn)
@@ -159,6 +166,111 @@ class PBSJobExecutor(ClusterJobExecutor):
             hit = line_parse.match(line.strip())
             if hit is not None:
                 JobInfo[hit.group(1)] = hit.group(2)
+        return JobInfo
+
+
+class SGEJobExecutor(ClusterJobExecutor):
+    """ SGEJobExecutor is initiated with default params that can be
+        overriden by jobs. """
+    def __init__(self, queue=PBS_queue, resources=DefResource,
+                 id_suffix=PBS_suffix):
+        self.queue = queue
+        self.resources = resources
+        self.id_suffix = id_suffix
+
+        if 'JOB_ID' in os.environ:
+            self.job_id = os.environ['JOB_ID'].replace(PBS_suffix, '')
+        else:
+            self.job_id = None
+
+        if (self.job_id is not None) or (ServerHost in hostname):
+            self.connected_to_cluster = True
+        else:
+            self.connected_to_cluster = False
+
+    def submit(self, JobInfo, Spawn=False):
+        ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
+        os.makedirs(ErrDir, exist_ok=True)
+        OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
+        os.makedirs(OutDir, exist_ok=True)
+
+        # build command
+        Qsub = ['qsub']
+        if 'queue' in JobInfo and JobInfo['queue'] is not None:
+            Qsub += ['-q', JobInfo['queue']]
+        elif self.queue is not None:
+            Qsub += ['-q', self.queue]
+        if 'name' in JobInfo and JobInfo['name'] is not None:
+            Qsub += ['-N', '_'.join(utils.make_iter(JobInfo['name']))]
+        if ErrDir is not None:
+            Qsub += ['-e', ErrDir]
+        if OutDir is not None:
+            Qsub += ['-o', OutDir]
+        if 'resources' in JobInfo:
+            this_res = JobInfo['resources']
+        else:
+            this_res = self.resources
+        if this_res is not None:
+            Qsub += ['-l'] + [','.join(['{}={}'.format(k, v)
+                              for k, v in sorted(this_res.items())])]
+
+        submit_id_raw = check_output(Qsub + [JobInfo['script']])\
+                .decode('UTF-8').replace('\n', '')
+        submit_id = submit_id_raw.split(' ')[2].replace(self.id_suffix, '')
+        update_fields(JobInfo, submit_id, Spawn)
+
+        return submit_id
+
+    def delete(self, JobInfo):
+        for jid in dal.get_internal_ids(JobInfo):
+           if not call(['qdel', jid]):
+               dal.remove_internal_id(JobInfo, jid)
+               JobInfo['state'] = 'init'
+
+        dal.update_job(JobInfo)
+
+    def qstat(self):
+        Q = {}
+        if not self.isconnected():
+            print('get_pbs_queue: not running on cluster.')
+            return Q
+        data = check_output(['qstat', '-u', os.environ['USER']],
+                            universal_newlines=True)
+        data = data.split('\n')
+        line_parse = re.compile(r'\s+')
+        for line in data:
+            line = line_parse.split(line)
+            if len(line) >= 5 and line[1].isnumeric():
+                Q[line[1]] = [line[3], line[5].replace('r', 'R').replace('q', 'Q')]
+        return Q
+
+    def get_job_id(self):
+        return self.job_id
+
+    def get_job_summary(self, PBS_ID=None):
+        if PBS_ID is None:
+            PBS_ID = self.job_id
+        if PBS_ID is None:
+            print('get_job_summary: not running on a cluster node.')
+            return {}
+        try:
+            return self.__parse_qstat(check_output(['qstat', '-j', PBS_ID]))
+        except Exception as e:
+            # sometimes this fails on cluster, not clear why (cluster does not recognize the BatchID)
+            print(e)
+            return None
+
+    def isconnected(self):
+        return self.connected_to_cluster
+
+    def __parse_qstat(self, text):
+        JobInfo = {}
+        text = text.decode('utf-8')
+        line_parse = re.compile(r'([\w.]*):(\s*)([\w\s:_\-/]*)')
+        for line in text.splitlines():
+            hit = line_parse.match(line.strip())
+            if hit is not None:
+                JobInfo[hit.group(1)] = hit.group(3)
         return JobInfo
 
 
