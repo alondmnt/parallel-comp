@@ -106,6 +106,9 @@ class PBSJobExecutor(ClusterJobExecutor):
         if this_res is not None:
             Qsub += ['-l'] + [','.join(['{}={}'.format(k, v)
                               for k, v in sorted(this_res.items())])]
+        if 'vars' in JobInfo:
+            Qsub += ['-v'] + [','.join(['{}={}'.format(k, repr(v))
+                              for k, v in sorted(JobInfo['vars'].items())])]
 
         submit_id_raw = check_output(Qsub + [JobInfo['script']])\
                 .decode('UTF-8').replace('\n', '')
@@ -213,6 +216,9 @@ class SGEJobExecutor(ClusterJobExecutor):
         if this_res is not None:
             Qsub += ['-l'] + [','.join(['{}={}'.format(k, v)
                               for k, v in sorted(this_res.items())])]
+        if 'vars' in JobInfo:
+            Qsub += ['-v'] + [','.join(['{}={}'.format(k, repr(v))
+                              for k, v in sorted(JobInfo['vars'].items())])]
 
         submit_id_raw = check_output(Qsub + [JobInfo['script']])\
                 .decode('UTF-8').replace('\n', '')
