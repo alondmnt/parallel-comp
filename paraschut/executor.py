@@ -353,6 +353,8 @@ class LocalJobExecutor(JobExecutor):
 
             env = os.environ.copy()
             env.update(PBS_JOBID=JobInfo['submit_id'])
+            if 'vars' in JobInfo:
+                env.update(JobInfo['vars'])
 
             if JobInfo['state'] == 'spawn':
                 # we need to get the right stdout/stderr
@@ -414,7 +416,11 @@ class FileJobExecutor(JobExecutor):
 
         submit_id = str(int(10**3*time.time() % 10**10))
         with open(self.path, 'a') as fid:
-            fid.write(f'export PBS_JOBID={submit_id}\n')
+            # setting environmet variables
+            fid.write(f'export PBS_JOBID={submit_id} ' +
+                      ' '.join(['{}={}'.format(k, repr(v))
+                                for k, v in sorted(JobInfo['vars'].items())]) + '\n')
+            # running script
             fid.write(JobInfo['script'] +
                       f"  # ({JobInfo['BatchID']}, {JobInfo['JobIndex']})\n")
         update_fields(JobInfo, submit_id, Spawn)
