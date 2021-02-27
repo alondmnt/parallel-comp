@@ -35,8 +35,9 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
               Display=None, Filter='', Executor=DefaultJobExecutor):
     """ Verbose mode prints a job report to screen, otherwise a dictionary Q
         is returned with the metadata of all jobs.
-        ResetMissing will set the state of jobs that failed while online.
-        Display is an iterable of states that desired for display (other
+        ResetMissing will reset the state to 'init' of jobs that failed while online.
+        ReportMissing will print the stderr log of job that failed while online.
+        Display is an iterable of states that are desired for display (other
         states will not be reported in Verbose mode).
         Filter accepts SQLite conditions as a string.
 
