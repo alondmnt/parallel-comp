@@ -188,6 +188,11 @@ def submit_jobs(Executor=DefaultJobExecutor, MaxJobs=None, MinPrior=0,
             MaxJobs = 1000
 
     Q = get_queue(Verbose=False, Filter=Filter, Executor=Executor)
+    if not len(Q):
+        print('submit_jobs: no jobs for submission.')
+        flag_file.close()
+        os.remove(lock_file)
+        return
 
     """
     BATCH/JOB PRIORITY RULES
