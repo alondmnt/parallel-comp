@@ -33,6 +33,8 @@ job metadata is kept in a dictionary, such as the one in the following example. 
 
 note the 'priority' field and its score. jobs are submitted in priority groups in descending order. first, all jobs within a batch with the highest priority score will be submitted. the next-ranked priority group will be submitted only once they have successfully completed, and so on. this allows one, for example, to separate the execution of a Map step and a Reduce step when implementing a MapReduce workflow. the absolute scores assigned as priorities can be arbitrary as long as they are ordered, with one exception: jobs with priorities that exceed 100 are globally prioritized - across all batches (the top ones are submitted before any other job in any other batch is). future versions may implement more elaborate dependencies between jobs.
 
+an additional field - 'vars' - may be added to the metadata, containing a dict of variable/values that will be set as environment variables for the specific job. this can be used as a method for passing arguments to scripts.
+
 NOTE, that some system-specific definitions appear in `config.py`. for example, in order to use your machine as local cluster, set LocalRun there to True.
 
 ## user API
