@@ -27,7 +27,7 @@ if LocalRun:
 else:
     DefaultJobExecutor = executor.PBSJobExecutor()
 
-PBS_ID = DefaultJobExecutor.get_job_id()
+ClusterID = DefaultJobExecutor.get_job_id()
 
 ### QUEUE FUNCTIONS ###
 
@@ -74,7 +74,7 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
 
             cnt['total'] += 1
             job_index = job['JobIndex']
-            if 'PBS_ID' not in job:
+            if 'ClusterID' not in job:
                 cnt[job['state']] += 1
                 utils.dict_append(state, job['state'], job_index)
                 continue
@@ -82,7 +82,7 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
             # checking job against current PBS queue
             # (for online and crashed jobs)
             found_id = False
-            for pid in utils.make_iter(job['PBS_ID']):
+            for pid in utils.make_iter(job['ClusterID']):
                 if pid in Q_server:
                     if Q_server[pid][1] == 'R':
                         job_index = str(job_index) + '*'
@@ -142,7 +142,7 @@ def get_sql_queue(Filter='', db_connection=None):
     df = pd.read_sql_query('SELECT * FROM ' +
                            """(SELECT j.*,
                                       b.name,
-                                      b.data_type
+                                      b.batch_type
                                FROM batch b INNER JOIN job j 
                                ON j.BatchID = b.BatchID) """ + filter_str,
                            conn)
@@ -153,8 +153,8 @@ def get_sql_queue(Filter='', db_connection=None):
                .tolist()).to_dict()
 
 
-def get_qstat(PBS_ID=PBS_ID, Executor=DefaultJobExecutor):
-    return Executor.get_job_summary(PBS_ID)
+def get_qstat(ClusterID=ClusterID, Executor=DefaultJobExecutor):
+    return Executor.get_job_summary(ClusterID)
 
 
 ### SUBMIT FUNCTIONS ###
@@ -268,7 +268,7 @@ def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor, Spawn=False,
     for j in utils.make_iter(JobIndex):
         conn = dal.open_db()
         job = dal.get_job_info(BatchID, j, HoldFile=True, ignore_spawn=True,
-                               db_connection=conn, PBS_ID=PBS_ID)
+                               db_connection=conn, ClusterID=ClusterID)
         print('submiting:\t{}'.format(job['script']))
         if job['state'] in ['submit', 'run']:
             warnings.warn('already submitted')
@@ -297,7 +297,7 @@ def spawn_submit(JobInfo, N, Executor=DefaultJobExecutor):
     dal.spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
 
     # adding self
-    dal.spawn_add_to_db(JobInfo['BatchID'], JobInfo['JobIndex'], PBS_ID)
+    dal.spawn_add_to_db(JobInfo['BatchID'], JobInfo['JobIndex'], ClusterID)
 
     for _ in range(N):
         submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'],
@@ -305,7 +305,7 @@ def spawn_submit(JobInfo, N, Executor=DefaultJobExecutor):
 
     # update current job with spawn ID
     return dal.get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'],
-                            SetID=True, PBS_ID=PBS_ID)
+                            SetID=True, ClusterID=ClusterID)
 
 
 def spawn_resubmit(BatchID, JobIndex, Executor=DefaultJobExecutor,
@@ -317,15 +317,15 @@ def spawn_resubmit(BatchID, JobIndex, Executor=DefaultJobExecutor,
         of spawns. """
     conn = dal.open_db()
     if SpawnCount is None:
-        SpawnCount = len(dal.spawn_get_info(BatchID, JobIndex, PBS_ID=None,
+        SpawnCount = len(dal.spawn_get_info(BatchID, JobIndex, ClusterID=None,
                                             db_connection=conn)['SpawnID'])
 
     Q_server = str(tuple(Executor.qstat())).replace(',)', ')')
-    condition = f'spawn_state=="{spawn_state}" AND PBS_ID NOT IN {Q_server}'
+    condition = f'spawn_state=="{spawn_state}" AND ClusterID NOT IN {Q_server}'
     dal.spawn_del_from_db(BatchID, JobIndex, Filter=condition, db_connection=conn)
     dal.close_db(conn)
 
-    n_miss = SpawnCount - len(dal.spawn_get_info(BatchID, JobIndex, PBS_ID=None)['SpawnID'])
+    n_miss = SpawnCount - len(dal.spawn_get_info(BatchID, JobIndex, ClusterID=None)['SpawnID'])
     for _ in range(n_miss):
         submit_one_job(BatchID, JobIndex, Executor=Executor, Spawn=True, SpawnCount=SpawnCount)
 
@@ -355,9 +355,9 @@ def qdel_batch(BatchID):
 def qdel_job(BatchID=None, JobIndex=None, JobInfo=None, Executor=DefaultJobExecutor):
     """ this will run the PBS qdel command on the given job. """
     if JobInfo is None:
-        JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True, PBS_ID=PBS_ID)
-    if 'PBS_ID' not in JobInfo and 'submit_id' not in JobInfo:
-        print('qdel_job: unknown PBS_ID for {BatchID},{JobIndex}'.format(**JobInfo))
+        JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True, ClusterID=ClusterID)
+    if 'ClusterID' not in JobInfo and 'submit_id' not in JobInfo:
+        print('qdel_job: unknown ClusterID for {BatchID},{JobIndex}'.format(**JobInfo))
         return
 
     Executor.delete(JobInfo)
@@ -368,10 +368,10 @@ def qdel_job(BatchID=None, JobIndex=None, JobInfo=None, Executor=DefaultJobExecu
 def set_complete(BatchID=None, JobIndex=None, JobInfo=None, Submit=False):
     if JobInfo is None:
         JobInfo = dal.get_job_info(BatchID, JobIndex, HoldFile=True,
-                                   ignore_spawn=True, PBS_ID=PBS_ID)
+                                   ignore_spawn=True, ClusterID=ClusterID)
     JobInfo['qstat'] = get_qstat()
     JobInfo['state'] = 'complete'
-    for f in ['PBS_ID', 'submit_id']:
+    for f in ['ClusterID', 'submit_id']:
         JobInfo.pop(f, None)
     dal.update_job(JobInfo, Release=True)
 
@@ -426,7 +426,7 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
         try:
             conn = dal.open_db(db_connection)
             JobInfo = dal.get_job_info(JobInfo['BatchID'], JobInfo['JobIndex'],
-                                       db_connection=conn, PBS_ID=PBS_ID)
+                                       db_connection=conn, ClusterID=ClusterID)
             if JobInfo['state'] != 'spawn':
                 # must not leave function with an ambiguous state in JobInfo
                 # e.g., if job has been re-submitted by some one/job
@@ -439,9 +439,9 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
             # (use same db_connection to make sure that no other job sees that I am done)
             conn.execute("""UPDATE spawn
                             SET spawn_state='complete' WHERE
-                            BatchID=? AND JobIndex=? AND PBS_ID=?""",
+                            BatchID=? AND JobIndex=? AND ClusterID=?""",
                             [JobInfo['BatchID'], JobInfo['JobIndex'],
-                             JobInfo['PBS_ID'][0]])
+                             JobInfo['ClusterID'][0]])
 
             # second, get all states of spawns
             spawn_dict = dal.spawn_get_info(JobInfo['BatchID'], JobInfo['JobIndex'],

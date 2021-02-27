@@ -20,7 +20,7 @@ def main(args):
     BatchID = int(args[0])
     JobIndex = int(args[1])
 
-    jobinfo = psu.get_job_info(BatchID, JobIndex, SetID=True, PBS_ID=psu.PBS_ID)
+    jobinfo = psu.get_job_info(BatchID, JobIndex, SetID=True, ClusterID=psu.ClusterID)
 
     data = [psu.get_job_info(BatchID, j)['result'] for j in jobinfo['data']]
     res = np.mean(data)

@@ -113,7 +113,7 @@ def add_job_to_queue(job_list, set_index=False, build_script=False):
             conn.execute("""INSERT INTO batch
                             VALUES (?,?,?)""",
                             [BatchID, '/'.join(utils.make_iter(job['name'])),
-                             job['data_type']])
+                             job['batch_type']])
 
         if set_index:
             job['JobIndex'] = batch_index[BatchID]

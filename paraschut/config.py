@@ -30,7 +30,7 @@ JobTemplate =   {'BatchID': None,
                  'JobIndex': None,
                  'priority': 1,
                  'name': ['human', 'genome_map'],
-                 'data_type': 'foo',
+                 'batch_type': 'foo',
                  'data': None,
                  'script': 'my_template_script.sh',  # template sciprt, see generate_script()
                  'queue': PBS_queue,

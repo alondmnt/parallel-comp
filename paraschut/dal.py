@@ -61,7 +61,7 @@ def init_db(conn):
     conn.execute("""CREATE TABLE batch(
                     BatchID     INT     PRIMARY KEY,
                     name        TEXT    NOT NULL,
-                    data_type   TEXT    NOT NULL
+                    batch_type  TEXT    NOT NULL
                     );""")
 
     # keeping just the essentials as separate columns, rest in the metadata JSON
@@ -82,7 +82,7 @@ def init_db(conn):
                     BatchID     INT     NOT NULL,
                     JobIndex    INT     NOT NULL,
                     SpawnID     INT     NOT NULL,
-                    PBS_ID      TEXT    NOT NULL,
+                    ClusterID   TEXT    NOT NULL,
                     stdout      TEXT    NOT NULL,
                     stderr      TEXT    NOT NULL,
                     spawn_state TEXT    NOT NULL
@@ -123,11 +123,11 @@ def get_batch_info(BatchID, db_connection=None):
     return [unpack_job(job) for job in batch_query]
 
 
-def get_job_info(BatchID, JobIndex, SetID=False, PBS_ID=None,
+def get_job_info(BatchID, JobIndex, SetID=False, ClusterID=None,
                  db_connection=None, enforce_unique_job=True, ignore_spawn=False,
                  HoldFile=False):
     """ HoldFile is ignored but kept for backward compatibility.
-        PBS_ID is a required argument when SetID=True or when handling
+        ClusterID is a required argument when SetID=True or when handling
         a spawn job, but otherwise it's not necessary. """
     conn = open_db(db_connection)
     job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
@@ -148,7 +148,7 @@ def get_job_info(BatchID, JobIndex, SetID=False, PBS_ID=None,
             JobInfo.pop('SpawnID', None)
         else:
             # no update made to job in DB
-            JobInfo.update(spawn_get_info(BatchID, JobIndex, PBS_ID=PBS_ID,
+            JobInfo.update(spawn_get_info(BatchID, JobIndex, ClusterID=ClusterID,
                                           db_connection=db_connection))
         return JobInfo
 
@@ -157,9 +157,9 @@ def get_job_info(BatchID, JobIndex, SetID=False, PBS_ID=None,
         return JobInfo
 
     # SetID==True
-    if PBS_ID != JobInfo['submit_id']:
-        raise Exception(f"current PBS_ID ({PBS_ID}) != submit_id ({JobInfo['submit_id']})")
-    JobInfo['PBS_ID'] = PBS_ID
+    if ClusterID != JobInfo['submit_id']:
+        raise Exception(f"current ClusterID ({ClusterID}) != submit_id ({JobInfo['submit_id']})")
+    JobInfo['ClusterID'] = ClusterID
     JobInfo['hostname'] = hostname
     JobInfo['state'] = 'run'
 
@@ -181,13 +181,13 @@ def validate_query(BatchID, JobIndex, job_query, enforce_unique_job, conn):
 
     return job_query[0]
 
-def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None,
+def spawn_get_info(BatchID, JobIndex, ClusterID=None, db_connection=None,
                    tries=WriteTries):
-    fields = ['SpawnID', 'PBS_ID', 'spawn_state', 'stdout', 'stderr']
+    fields = ['SpawnID', 'ClusterID', 'spawn_state', 'stdout', 'stderr']
     condition = f'BatchID={BatchID} AND JobIndex={JobIndex}'
     max_query_size = None
-    if (PBS_ID is not None) and (PBS_ID != 'paraschut') and (len(PBS_ID) > 0):
-        condition += f' AND PBS_ID="{PBS_ID}"'
+    if (ClusterID is not None) and (ClusterID != 'paraschut') and (len(ClusterID) > 0):
+        condition += f' AND ClusterID="{ClusterID}"'
         max_query_size = 1
 
     # why would we need tries for reading? because it's possible that
@@ -200,9 +200,9 @@ def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None,
         close_db(conn, db_connection)
         try:
             if len(spawn_query) == 0:
-                raise Exception(f'no corresponding spawn job for {BatchID, JobIndex, PBS_ID}')
+                raise Exception(f'no corresponding spawn job for {BatchID, JobIndex, ClusterID}')
             elif (max_query_size is not None) and (len(spawn_query) > max_query_size):
-                raise Exception(f'too many spawns for PBS_ID={PBS_ID}')
+                raise Exception(f'too many spawns for ClusterID={ClusterID}')
 
         except Exception as err:
             print(f'spawn_get_info: try {t+1}/{tries} failed with:\n{err}\n')
@@ -217,7 +217,7 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
                enforce_unique_job=True):
     """ Release is ignored but kept for backward compatibility. """
     BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
-    PID = JobInfo['PBS_ID'] if 'PBS_ID' in JobInfo else 'unkown_PBS_ID'
+    PID = JobInfo['ClusterID'] if 'ClusterID' in JobInfo else 'unkown_ClusterID'
     md5_init = JobInfo['md5']
 
     for t in range(tries):
@@ -233,8 +233,8 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
             # of the data, that is consistent with the DB
             if md5[-1] != JobInfo['md5']:
                 other_id = unpack_job(md5)
-                if 'PBS_ID' in other_id:
-                    other_id = other_id['PBS_ID']
+                if 'ClusterID' in other_id:
+                    other_id = other_id['ClusterID']
                 else:
                     other_id = 'unknown'
                 raise Exception(f'job ({BatchID}, {JobIndex}, {PID}) was overwritten by another process ({other_id})')
@@ -292,7 +292,7 @@ def make_job_unique(BatchID, JobIndex, db_connection=None):
     close_db(conn, db_connection)
 
 
-def spawn_add_to_db(BatchID, JobIndex, PBS_ID, SpawnCount=None,
+def spawn_add_to_db(BatchID, JobIndex, ClusterID, SpawnCount=None,
                     spawn_state='submit',
                     db_connection=None, tries=WriteTries):
     for t in range(tries):
@@ -312,12 +312,12 @@ def spawn_add_to_db(BatchID, JobIndex, PBS_ID, SpawnCount=None,
                 SpawnID = SpawnID[0]
 
             print(f'new spawn with id={SpawnID}')
-            conn.execute("""INSERT INTO spawn(BatchID, JobIndex, SpawnID, PBS_ID,
+            conn.execute("""INSERT INTO spawn(BatchID, JobIndex, SpawnID, ClusterID,
                                               spawn_state, stdout, stderr)
                             VALUES (?,?,?,?,?,?,?)""",
-                         [BatchID, JobIndex, SpawnID, PBS_ID,
-                          spawn_state, LogOut.format(BatchID=BatchID, submit_id=PBS_ID),
-                          LogErr.format(BatchID=BatchID, submit_id=PBS_ID)])
+                         [BatchID, JobIndex, SpawnID, ClusterID,
+                          spawn_state, LogOut.format(BatchID=BatchID, submit_id=ClusterID),
+                          LogErr.format(BatchID=BatchID, submit_id=ClusterID)])
             close_db(conn, db_connection)
             break
 
@@ -393,7 +393,7 @@ def print_log(BatchID, JobIndex, LogKey='stdout', LogIndex=-1, Lines=None, RegEx
             print(line[:-1])
 
 
-def get_internal_ids(JobInfo, fields=['submit_id', 'PBS_ID']):
+def get_internal_ids(JobInfo, fields=['submit_id', 'ClusterID']):
     # handling running/submitted jobs/spawns by using both fields
     job_list = []
     for f in fields:
@@ -403,7 +403,7 @@ def get_internal_ids(JobInfo, fields=['submit_id', 'PBS_ID']):
     return list(set(job_list))  # unique
 
 
-def remove_internal_id(JobInfo, jid, fields=['submit_id', 'PBS_ID']):
+def remove_internal_id(JobInfo, jid, fields=['submit_id', 'ClusterID']):
     for f in fields:
         if f not in JobInfo:
             continue

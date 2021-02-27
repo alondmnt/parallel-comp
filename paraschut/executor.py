@@ -38,7 +38,7 @@ class JobExecutor(object):
         pass
 
     def qstat(self):
-        """ returns a dict with PBS_IDs as keys and [name, state in {'R','Q'}]
+        """ returns a dict with ClusterIDs as keys and [name, state in {'R','Q'}]
             as values. """
         return {}
 
@@ -46,7 +46,7 @@ class JobExecutor(object):
         """ returns the job ID assigned by the cluster. """
         return None
 
-    def get_job_summary(self, PBS_ID=None):
+    def get_job_summary(self, ClusterID=None):
         """ returns a dict with any fields describing the job state
             (time, resources, etc.). """
         return {}
@@ -145,14 +145,14 @@ class PBSJobExecutor(ClusterJobExecutor):
     def get_job_id(self):
         return self.job_id
 
-    def get_job_summary(self, PBS_ID=None):
-        if PBS_ID is None:
-            PBS_ID = self.job_id
-        if PBS_ID is None:
+    def get_job_summary(self, ClusterID=None):
+        if ClusterID is None:
+            ClusterID = self.job_id
+        if ClusterID is None:
             print('get_job_summary: not running on a cluster node.')
             return {}
         try:
-            return self.__parse_qstat(check_output(['qstat', '-f', PBS_ID]))
+            return self.__parse_qstat(check_output(['qstat', '-f', ClusterID]))
         except Exception as e:
             # sometimes this fails on cluster, not clear why (cluster does not recognize the BatchID)
             print(e)
@@ -253,14 +253,14 @@ class SGEJobExecutor(ClusterJobExecutor):
     def get_job_id(self):
         return self.job_id
 
-    def get_job_summary(self, PBS_ID=None):
-        if PBS_ID is None:
-            PBS_ID = self.job_id
-        if PBS_ID is None:
+    def get_job_summary(self, ClusterID=None):
+        if ClusterID is None:
+            ClusterID = self.job_id
+        if ClusterID is None:
             print('get_job_summary: not running on a cluster node.')
             return {}
         try:
-            return self.__parse_qstat(check_output(['qstat', '-j', PBS_ID]))
+            return self.__parse_qstat(check_output(['qstat', '-j', ClusterID]))
         except Exception as e:
             # sometimes this fails on cluster, not clear why (cluster does not recognize the BatchID)
             print(e)
@@ -299,7 +299,7 @@ class LocalJobExecutor(JobExecutor):
 
     def submit(self, JobInfo, Spawn=False):
         if self.job_id != 'paraschut':
-            self.__print('cannot submit from a subprocess. PBS_ID must be set to "paraschut".', 2)
+            self.__print('cannot submit from a subprocess. ClusterID must be set to "paraschut".', 2)
             return 'failed'
 
         ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
@@ -359,7 +359,7 @@ class LocalJobExecutor(JobExecutor):
             if JobInfo['state'] == 'spawn':
                 # we need to get the right stdout/stderr
                 JobInfo.update(dal.spawn_get_info(JobInfo['BatchID'],
-                        JobInfo['JobIndex'], PBS_ID=JobInfo['submit_id']))
+                        JobInfo['JobIndex'], ClusterID=JobInfo['submit_id']))
 
             with open(JobInfo['stdout'][-1], 'w') as oid:
                 with open(JobInfo['stderr'][-1], 'w') as eid:
@@ -411,7 +411,7 @@ class FileJobExecutor(JobExecutor):
 
     def submit(self, JobInfo, Spawn=False):
         if self.job_id != 'paraschut':
-            print('cannot submit from within a job. PBS_ID must be set to "paraschut".')
+            print('cannot submit from within a job. ClusterID must be set to "paraschut".')
             return 'failed'
 
         submit_id = str(int(10**3*time.time() % 10**10))
@@ -466,7 +466,7 @@ def update_fields(JobInfo, submit_id, Spawn):
 
         utils.dict_append(JobInfo, 'stdout', LogOut.format(**JobInfo))
         utils.dict_append(JobInfo, 'stderr', LogErr.format(**JobInfo))
-        JobInfo.pop('PBS_ID', None)
+        JobInfo.pop('ClusterID', None)
         JobInfo.pop('qstat', None)
 
     elif JobInfo['state'] != 'spawn':

@@ -7,6 +7,7 @@ this release adds support for the SGE (Sun Grid Engine) cluster.
 - feature: `SGEJobExecutor` is a new class for handling jobs on a SGE cluster. you may define it as the DefaultJobExecutor in `manage.py`.
 - feature: setting environment variables for jobs. can be defined by adding a `vars` field with a dict of variable/value pairs.
 - improved: misc stability and error handling issues.
+- changed: renamed PBS_ID-->ClusterID, data_type-->batch_type.
 
 ## v0.4.0
 
@@ -18,7 +19,7 @@ this release focuses on locally executing jobs using multi-processing, and makin
 	- `PBSJobExecutor`: for submitting jobs on a PBS cluster.
 	- `LocalJobExecutor`: for submitting jobs as subprocesses on a local machine.
 	- `FileJobExecutor`: for "submitting" jobs to a shell script that can be exectued sequentially.
-- changed: `get_job_info` should be called with a given `PBS_ID` if `SetID=True` or the job is a spawn job.
+- changed: `get_job_info` should be called with a given `ClusterID` if `SetID=True` or the job is a spawn job.
 
 ## v0.3.0
 

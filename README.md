@@ -20,7 +20,7 @@ job metadata is kept in a dictionary, such as the one in the following example. 
          'JobIndex': None,
          'priority': 1,
          'name': ['human', 'genome_map'],
-         'data_type': 'foo',
+         'batch_type': 'foo',
          'data': None,
          'script': 'my_template_script.sh',
          'queue': 'tamirs3',
@@ -71,7 +71,7 @@ e.g., for displaying only a compact report of currently supposed-to-be running j
 
 `get_queue` can also filter jobs according to fields, such as:
 
-        get_queue(Filter='name LIKE "%Ingolia_2009%" AND BatchID > 20210101000000 AND data_type=="ribo"')
+        get_queue(Filter='name LIKE "%Ingolia_2009%" AND BatchID > 20210101000000 AND batch_type=="ribo"')
 
 e.g., for displaying only jobs from the Ingolia-2009 experiment queued after January 1st 2021. Filter accepts any number of SQLite conditions.
 
@@ -174,7 +174,7 @@ the following functions are useful to create and use jobs from within scripts an
 
 ### job runtime
 
-        get_job_info(SetID=True)  # will update the hostname and PBS_ID of the running job
+        get_job_info(SetID=True)  # will update the hostname and ClusterID of the running job
         get_qstat()  # can be used to report on metadata from the PBS system
         set_complete(Submit=True)  # set state when job is done  and submit the next set of valid jobs
         update_job(JobInfo)  # for more elaborate updates to job metadata

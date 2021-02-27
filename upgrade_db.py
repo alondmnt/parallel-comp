@@ -48,7 +48,7 @@ def populate_db(QFile=psu.QFile):
         conn.execute("""INSERT INTO batch
                         VALUES (?,?,?)""",
                      [batch_id, '/'.join(batch[0]['name']),
-                      batch[0]['data_type']])
+                      batch[0]['batch_type']])
 
     conn.commit()
     conn.close()
@@ -61,11 +61,16 @@ def populate_db(QFile=psu.QFile):
 
 
 def upgrade_job(JobInfo):
-    if 'organism' in JobInfo:
-        JobInfo['name'] = [JobInfo['organism']] + JobInfo['name']
     if 'status' in JobInfo:
         JobInfo['state'] = JobInfo['status']
         del JobInfo['status']
+    if 'PBS_ID' in JobInfo:
+        JobInfo['ClusterID'] = JobInfo['PBS_ID']
+        del JobInfo['PBS_ID']
+    if 'data_type' in JobInfo:
+        JobInfo['batch_type'] = JobInfo['data_type']
+    if 'organism' in JobInfo:
+        JobInfo['name'] = [JobInfo['organism']] + JobInfo['name']
 
 
 def get_queue(QFile):
