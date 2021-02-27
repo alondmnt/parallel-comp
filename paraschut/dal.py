@@ -133,16 +133,11 @@ def get_job_info(BatchID, JobIndex, SetID=False, PBS_ID=None,
     job_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
                                       BatchID={BatchID} AND
                                       JobIndex={JobIndex}"""))
-    if len(job_query) != 1:
-        if enforce_unique_job:
-            warnings.warn(f'job ({BatchID, JobIndex}) is not unique ({len(job_query)}). running make_job_unique()')
-            make_job_unique(BatchID, JobIndex, db_connection=conn)
-            job_query = job_query[-1:]
-        else:
-            close_db(conn)
-            raise Exception(f'job ({BatchID}, {JobIndex}) is not unique ({len(job_query)}). run make_job_unique()')
-    job_query = job_query[0]
-    JobInfo = unpack_job(job_query)
+    try:
+        JobInfo = unpack_job(validate_query(BatchID, JobIndex, job_query, enforce_unique_job, conn))
+    except Exception as err:
+        close_db(conn)
+        raise(err)
 
     close_db(conn, db_connection)
 
@@ -172,6 +167,19 @@ def get_job_info(BatchID, JobIndex, SetID=False, PBS_ID=None,
 
     return JobInfo
 
+
+def validate_query(BatchID, JobIndex, job_query, enforce_unique_job, conn):
+    if len(job_query) == 0:
+        raise Exception(f'job ({BatchID}, {JobIndex}) does not exist.')
+    elif len(job_query) > 1:
+        if enforce_unique_job:
+            warnings.warn(f'job ({BatchID, JobIndex}) is not unique (n={len(job_query)}). running make_job_unique()')
+            make_job_unique(BatchID, JobIndex, db_connection=conn)
+            job_query = job_query[-1:]
+        else:
+            raise Exception(f'job ({BatchID}, {JobIndex}) is not unique (n={len(job_query)}). run make_job_unique()')
+
+    return job_query[0]
 
 def spawn_get_info(BatchID, JobIndex, PBS_ID=None, db_connection=None,
                    tries=WriteTries):
@@ -220,17 +228,11 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
                                         FROM job WHERE
                                         BatchID={BatchID} AND
                                         JobIndex={JobIndex}"""))
-            if len(md5) != 1:
-                if enforce_unique_job:
-                    warnings.warn(f'job ({BatchID, JobIndex}) is not unique ({len(md5)}). running make_job_unique()')
-                    make_job_unique(BatchID, JobIndex, db_connection=conn)
-                    md5 = md5[-1:]
-                else:
-                    raise Exception(f'job ({BatchID, JobIndex}) is not unique ({len(md5)}). run make_job_unique()')
+            md5 = validate_query(BatchID, JobIndex, md5, enforce_unique_job, conn)
             # here we're ensuring that JobInfo contains an updated version
             # of the data, that is consistent with the DB
-            if md5[0][-1] != JobInfo['md5']:
-                other_id = unpack_job(md5[0])
+            if md5[-1] != JobInfo['md5']:
+                other_id = unpack_job(md5)
                 if 'PBS_ID' in other_id:
                     other_id = other_id['PBS_ID']
                 else:
@@ -249,7 +251,7 @@ def update_job(JobInfo, Release=False, db_connection=None, tries=WriteTries,
 
             conn.execute("""DELETE FROM job
                             WHERE idx=? AND BatchID=? AND JobIndex=?""",
-                         [md5[0][0], JobInfo['BatchID'], JobInfo['JobIndex']])
+                         [md5[0], JobInfo['BatchID'], JobInfo['JobIndex']])
             if (conn.total_changes - n_change) < 2:
                 raise Exception('failed to update job' +
                                 '(probably trying to delete an already deleted entry)')
