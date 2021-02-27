@@ -112,7 +112,7 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
                 job_dir = JobDir + '{}/{}'.format(BatchID, JobIndex)
                 if os.path.isdir(job_dir):
                     shutil.rmtree(job_dir)
-                dal.set_job_field(BatchID, JobIndex, {'state': 'init'})
+                set_job_field(BatchID, JobIndex, {'state': 'init'})
 
     if not Verbose:
         return Q
