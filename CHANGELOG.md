@@ -1,5 +1,13 @@
 #  PARASCHUT changelog
 
+## v0.5.0
+
+this release adds support for the SGE (Sun Grid Engine) cluster.
+
+- feature: `SGEJobExecutor` is a new class for handling jobs on a SGE cluster. you may define it as the DefaultJobExecutor in `manage.py`.
+- feature: setting environment variables for jobs. can be defined by adding a `vars` field with a dict of variable/value pairs.
+- improved: misc stability and error handling issues.
+
 ## v0.4.0
 
 this release focuses on locally executing jobs using multi-processing, and making the job manager generalized and extendable via a set of `JobExecutor` classes.
