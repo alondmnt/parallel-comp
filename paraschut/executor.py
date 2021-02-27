@@ -246,7 +246,7 @@ class SGEJobExecutor(ClusterJobExecutor):
         line_parse = re.compile(r'\s+')
         for line in data:
             line = line_parse.split(line)
-            if len(line) >= 5 and line[1].isnumeric():
+            if len(line) > 5 and line[1].isnumeric():
                 Q[line[1]] = [line[3], line[5].replace('r', 'R').replace('q', 'Q')]
         return Q
 
