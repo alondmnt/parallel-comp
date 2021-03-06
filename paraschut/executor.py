@@ -12,10 +12,13 @@ Created on Wed Mar 18 22:45:50 2015
 """
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 import os
 import re
 from subprocess import run, check_output, call
 import time
+
+import pandas as pd
 
 from .config import PBS_suffix, PBS_queue, DefResource, JobDir, LogOut, LogErr, \
         ServerHost, hostname
@@ -278,6 +281,106 @@ class SGEJobExecutor(ClusterJobExecutor):
             if hit is not None:
                 JobInfo[hit.group(1)] = hit.group(3)
         return JobInfo
+
+
+class SlurmJobExecutor(ClusterJobExecutor):
+    """ SlurmJobExecutor is initiated with default params that can be
+        overriden by jobs. """
+    def __init__(self, queue=PBS_queue, resources=DefResource,
+                 id_suffix=PBS_suffix):
+        self.queue = queue
+        self.resources = resources
+        self.id_suffix = id_suffix
+
+        if 'SLURM_JOBID' in os.environ:
+            self.job_id = os.environ['SLURM_JOBID'].replace(PBS_suffix, '')
+        else:
+            self.job_id = None
+
+        if (self.job_id is not None) or (ServerHost in hostname):
+            self.connected_to_cluster = True
+        else:
+            self.connected_to_cluster = False
+
+    def submit(self, JobInfo, Spawn=False):
+        ErrFile = LogErr.replace('{submit_id}', '%j').format(**JobInfo)
+        os.makedirs(os.path.dirname(ErrFile), exist_ok=True)
+        OutFile = LogOut.replace('{submit_id}', '%j').format(**JobInfo)
+        os.makedirs(os.path.dirname(OutFile), exist_ok=True)
+
+        # build command
+        Qsub = ['sbatch']
+        if 'queue' in JobInfo and JobInfo['queue'] is not None:
+            Qsub += ['-p', JobInfo['queue']]
+        elif self.queue is not None:
+            Qsub += ['-p', self.queue]
+        if 'name' in JobInfo and JobInfo['name'] is not None:
+            Qsub += ['--job-name=' + '_'.join(utils.make_iter(JobInfo['name']))]
+        if ErrFile is not None:
+            Qsub += ['-e', ErrFile]
+        if OutFile is not None:
+            Qsub += ['-o', OutFile]
+        if 'resources' in JobInfo:
+            this_res = JobInfo['resources']
+        else:
+            this_res = self.resources
+        if this_res is not None:
+            Qsub += ['--gres=' + this_res]
+        if 'vars' in JobInfo:
+            Qsub += ['-v'] + [','.join(['{}={}'.format(k, repr(v))
+                              for k, v in sorted(JobInfo['vars'].items())])]
+
+        submit_id_raw = check_output(Qsub + [JobInfo['script']])\
+                .decode('UTF-8').replace('\n', '')
+        submit_id = submit_id_raw.split(' ')[3].replace(self.id_suffix, '')
+        update_fields(JobInfo, submit_id, Spawn)
+
+        return submit_id
+
+    def delete(self, JobInfo):
+        for jid in dal.get_internal_ids(JobInfo):
+           if not call(['scancel', jid]):
+               dal.remove_internal_id(JobInfo, jid)
+               JobInfo['state'] = 'init'
+
+        dal.update_job(JobInfo)
+
+    def qstat(self):
+        Q = {}
+        if not self.isconnected():
+            print('get_pbs_queue: not running on cluster.')
+            return Q
+        data = check_output(['squeue', '-u', os.environ['USER']],
+                            universal_newlines=True)
+        data = data.split('\n')
+        line_parse = re.compile(r'\s+')
+        for line in data:
+            line = line_parse.split(line)
+            if len(line) > 5 and line[1].isnumeric():
+                Q[line[1]] = [line[3], line[5].replace('r', 'R').replace('q', 'Q')]
+        return Q
+
+    def get_job_id(self):
+        return self.job_id
+
+    def get_job_summary(self, ClusterID=None):
+        if ClusterID is None:
+            ClusterID = self.job_id
+        if ClusterID is None:
+            print('get_job_summary: not running on a cluster node.')
+            return {}
+        try:
+            return self.__parse_qstat(check_output(['sstat', ClusterID]))
+        except Exception as e:
+            # sometimes this fails on cluster, not clear why (cluster does not recognize the BatchID)
+            print(e)
+            return None
+
+    def isconnected(self):
+        return self.connected_to_cluster
+
+    def __parse_qstat(self, text):
+        return pd.read_csv(BytesIO(text), sep='\s+').to_dict(orient='index')[1]
 
 
 class LocalJobExecutor(JobExecutor):

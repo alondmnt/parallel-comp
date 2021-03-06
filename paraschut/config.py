@@ -40,4 +40,3 @@ JobTemplate =   {'BatchID': None,
 # automatically-set variables
 
 hostname = socket.gethostname()
-LocalPath = os.path.splitdrive(os.path.abspath('.'))[1]
