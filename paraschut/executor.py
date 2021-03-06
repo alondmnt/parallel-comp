@@ -17,6 +17,7 @@ import os
 import re
 from subprocess import run, check_output, call
 import time
+from warnings import warn
 
 import pandas as pd
 
@@ -217,6 +218,8 @@ class SGEJobExecutor(ClusterJobExecutor):
         else:
             this_res = self.resources
         if this_res is not None:
+            if 'smp' in this_res:
+                Qsub += ['-pe', f'smp {this_res.pop("smp")}']
             Qsub += ['-l'] + [','.join(['{}={}'.format(k, v)
                               for k, v in sorted(this_res.items())])]
         if 'vars' in JobInfo:
@@ -325,10 +328,11 @@ class SlurmJobExecutor(ClusterJobExecutor):
         else:
             this_res = self.resources
         if this_res is not None:
+            if 'walltime' in this_res:
+                Qsub += ['--time', this_res.pop('walltime')]
             Qsub += ['--gres=' + this_res]
         if 'vars' in JobInfo:
-            Qsub += ['-v'] + [','.join(['{}={}'.format(k, repr(v))
-                              for k, v in sorted(JobInfo['vars'].items())])]
+            warn('environment variables cannot be set on Slurm clusters.')
 
         submit_id_raw = check_output(Qsub + [JobInfo['script']])\
                 .decode('UTF-8').replace('\n', '')
@@ -380,7 +384,7 @@ class SlurmJobExecutor(ClusterJobExecutor):
         return self.connected_to_cluster
 
     def __parse_qstat(self, text):
-        return pd.read_csv(BytesIO(text), sep='\s+').to_dict(orient='index')[1]
+        return pd.read_csv(BytesIO(text), sep=r'\s+').to_dict(orient='index')[1]
 
 
 class LocalJobExecutor(JobExecutor):
