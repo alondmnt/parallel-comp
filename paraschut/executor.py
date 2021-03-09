@@ -457,7 +457,7 @@ class LocalJobExecutor(JobExecutor):
 
             with open(JobInfo['stdout'][-1], 'w') as oid:
                 with open(JobInfo['stderr'][-1], 'w') as eid:
-                    self.__print(f"JobInfo['submit_id']: JobInfo['script']", 3)
+                    self.__print(f"{JobInfo['submit_id']}: {JobInfo['script']}", 3)
                     self._queue[JobInfo['submit_id']][1] = 'R'
                     job_res = run(JobInfo['script'], shell=True, env=env, stdout=oid, stderr=eid)
             del self._queue[JobInfo['submit_id']]
