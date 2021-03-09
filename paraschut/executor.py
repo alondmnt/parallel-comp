@@ -419,6 +419,7 @@ class LocalJobExecutor(JobExecutor):
                     del self._queue[jid]
                     dal.remove_internal_id(JobInfo, jid)
                     JobInfo['state'] = 'init'
+                    self.__print(f"job '{jid}' ('{JobInfo['BatchID']}', '{JobInfo['JobIndex']}') was deleted", 3)
                 else:
                     self.__print(f"job '{jid}' cannot be deleted", 2)
 

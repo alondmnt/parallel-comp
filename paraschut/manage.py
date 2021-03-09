@@ -432,7 +432,6 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
                 # must not leave function with an ambiguous state in JobInfo
                 # e.g., if job has been re-submitted by some one/job
                 # (unknown logic follows)
-                dal.close_db(conn)
                 raise Exception(f"""unknown state "{JobInfo['state']}" encountered for spawned
                                     job ({JobInfo['BatchID']}, {JobInfo['JobIndex']})""")
 
