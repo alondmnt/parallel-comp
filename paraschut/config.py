@@ -16,9 +16,9 @@ ServerHost = 'tau.ac.il'
 QFile = 'example/job_queue.db'
 JobDir = 'example/'
 PBS_suffix = '.power8.tau.ac.il'
-LogDir = JobDir + '{BatchID}/logs/{submit_id}' + PBS_suffix
-LogOut = LogDir + '.OU'  # template
-LogErr = LogDir + '.ER'
+LogFormat = JobDir + '{BatchID}/logs/{name}_{JobIndex:04d}_{subtime}'  # template
+LogOut = LogFormat + '.out'
+LogErr = LogFormat + '.err'
 TempFiles = ['*.genes.*', '*.len*.npz']
 PBS_queue = 'tamir-nano4'
 WriteTries = 20
@@ -29,7 +29,7 @@ DefResource = {'mem': '1gb', 'pmem': '1gb', 'vmem': '3gb',
 JobTemplate =   {'BatchID': None,
                  'JobIndex': None,
                  'priority': 1,
-                 'name': ['human', 'genome_map'],
+                 'name': 'most_excellent_job',
                  'batch_type': 'foo',
                  'data': None,
                  'script': 'my_template_script.sh',  # template sciprt, see generate_script()

@@ -88,10 +88,7 @@ class PBSJobExecutor(ClusterJobExecutor):
             self.connected_to_cluster = False
 
     def submit(self, JobInfo, Spawn=False):
-        ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
-        os.makedirs(ErrDir, exist_ok=True)
-        OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
-        os.makedirs(OutDir, exist_ok=True)
+        OutFile, ErrFile = utils.get_log_paths(JobInfo)
 
         # build command
         Qsub = ['qsub']
@@ -99,10 +96,10 @@ class PBSJobExecutor(ClusterJobExecutor):
             Qsub += ['-q', JobInfo['queue']]
         elif self.queue is not None:
             Qsub += ['-q', self.queue]
-        if ErrDir is not None:
-            Qsub += ['-e', ErrDir]
-        if OutDir is not None:
-            Qsub += ['-o', OutDir]
+        if ErrFile is not None:
+            Qsub += ['-e', ErrFile]
+        if OutFile is not None:
+            Qsub += ['-o', OutFile]
         if 'resources' in JobInfo:
             this_res = JobInfo['resources']
         else:
@@ -117,7 +114,7 @@ class PBSJobExecutor(ClusterJobExecutor):
         submit_id_raw = check_output(Qsub + [JobInfo['script']])\
                 .decode('UTF-8').replace('\n', '')
         submit_id = submit_id_raw.replace(self.id_suffix, '')
-        update_fields(JobInfo, submit_id, Spawn)
+        update_fields(JobInfo, submit_id, Spawn, OutFile, ErrFile)
 
         return submit_id
 
@@ -196,10 +193,7 @@ class SGEJobExecutor(ClusterJobExecutor):
             self.connected_to_cluster = False
 
     def submit(self, JobInfo, Spawn=False):
-        ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
-        os.makedirs(ErrDir, exist_ok=True)
-        OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
-        os.makedirs(OutDir, exist_ok=True)
+        OutFile, ErrFile = utils.get_log_paths(JobInfo)
 
         # build command
         Qsub = ['qsub']
@@ -209,10 +203,10 @@ class SGEJobExecutor(ClusterJobExecutor):
             Qsub += ['-q', self.queue]
         if 'name' in JobInfo and JobInfo['name'] is not None:
             Qsub += ['-N', '_'.join(utils.make_iter(JobInfo['name']))]
-        if ErrDir is not None:
-            Qsub += ['-e', ErrDir]
-        if OutDir is not None:
-            Qsub += ['-o', OutDir]
+        if ErrFile is not None:
+            Qsub += ['-e', ErrFile]
+        if OutFile is not None:
+            Qsub += ['-o', OutFile]
         if 'resources' in JobInfo:
             this_res = JobInfo['resources']
         else:
@@ -229,7 +223,7 @@ class SGEJobExecutor(ClusterJobExecutor):
         submit_id_raw = check_output(Qsub + [JobInfo['script']])\
                 .decode('UTF-8').replace('\n', '')
         submit_id = submit_id_raw.split(' ')[2].replace(self.id_suffix, '')
-        update_fields(JobInfo, submit_id, Spawn)
+        update_fields(JobInfo, submit_id, Spawn, OutFile, ErrFile)
 
         return submit_id
 
@@ -306,10 +300,7 @@ class SlurmJobExecutor(ClusterJobExecutor):
             self.connected_to_cluster = False
 
     def submit(self, JobInfo, Spawn=False):
-        ErrFile = LogErr.replace('{submit_id}', '%j').format(**JobInfo)
-        os.makedirs(os.path.dirname(ErrFile), exist_ok=True)
-        OutFile = LogOut.replace('{submit_id}', '%j').format(**JobInfo)
-        os.makedirs(os.path.dirname(OutFile), exist_ok=True)
+        OutFile, ErrFile = utils.get_log_paths(JobInfo)
 
         # build command
         Qsub = ['sbatch']
@@ -337,7 +328,7 @@ class SlurmJobExecutor(ClusterJobExecutor):
         submit_id_raw = check_output(Qsub + [JobInfo['script']])\
                 .decode('UTF-8').replace('\n', '')
         submit_id = submit_id_raw.split(' ')[3].replace(self.id_suffix, '')
-        update_fields(JobInfo, submit_id, Spawn)
+        update_fields(JobInfo, submit_id, Spawn, OutFile, ErrFile)
 
         return submit_id
 
@@ -409,13 +400,9 @@ class LocalJobExecutor(JobExecutor):
             self.__print('cannot submit from a subprocess. ClusterID must be set to "paraschut".', 2)
             return 'failed'
 
-        ErrDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
-        os.makedirs(ErrDir, exist_ok=True)
-        OutDir = os.path.abspath(JobDir) + '/{}/logs/'.format(JobInfo['BatchID'])
-        os.makedirs(OutDir, exist_ok=True)
-
+        OutFile, ErrFile = utils.get_log_paths(JobInfo)
         submit_id = str(int(10**3*time.time() % 10**10))
-        update_fields(JobInfo, submit_id, Spawn)
+        update_fields(JobInfo, submit_id, Spawn, OutFile, ErrFile)
         self._queue[submit_id] = [f"{JobInfo['BatchID']}-{JobInfo['JobIndex']}", 'Q',
                                   self._pool.submit(self.__run_local_job, JobInfo)]
         # we store a Future object with the result of the run in queue
@@ -530,7 +517,7 @@ class FileJobExecutor(JobExecutor):
             # running script
             fid.write(JobInfo['script'] +
                       f"  # ({JobInfo['BatchID']}, {JobInfo['JobIndex']})\n")
-        update_fields(JobInfo, submit_id, Spawn)
+        update_fields(JobInfo, submit_id, Spawn, None, None)
         self._queue[submit_id] = [f"{JobInfo['BatchID']}, {JobInfo['JobIndex']}", 'Q']
 
         return submit_id
@@ -563,16 +550,14 @@ class FileJobExecutor(JobExecutor):
         return self.connected_to_cluster
 
 
-def update_fields(JobInfo, submit_id, Spawn):
+def update_fields(JobInfo, submit_id, Spawn, OutFile, ErrFile):
     JobInfo['submit_id'] = submit_id
     # submit_id used by LocalJobExecutor so must update here (even if not in DB)
 
     if not Spawn:
-        JobInfo['subtime'] = utils.get_time()
         JobInfo['state'] = 'submit'
-
-        utils.dict_append(JobInfo, 'stdout', LogOut.format(**JobInfo))
-        utils.dict_append(JobInfo, 'stderr', LogErr.format(**JobInfo))
+        utils.dict_append(JobInfo, 'stdout', OutFile)
+        utils.dict_append(JobInfo, 'stderr', ErrFile)
         JobInfo.pop('ClusterID', None)
         JobInfo.pop('qstat', None)
 

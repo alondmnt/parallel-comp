@@ -292,17 +292,23 @@ def make_job_unique(BatchID, JobIndex, db_connection=None):
     close_db(conn, db_connection)
 
 
-def spawn_add_to_db(BatchID, JobIndex, ClusterID, SpawnCount=None,
+def spawn_add_to_db(JobInfo, ClusterID, SpawnCount=None,
                     spawn_state='submit',
                     db_connection=None, tries=WriteTries):
+    # we use JobInfo here in order to have all fields when generating log paths
+    BatchID, JobIndex = JobInfo['BatchID'], JobInfo['JobIndex']
+    JobInfo = JobInfo.copy()
+    JobInfo['submit_id'] = ClusterID
+
     for t in range(tries):
         try:
             conn = open_db(db_connection)
 
             # auto-numbering of spawns
-            SpawnIDs = pd.read_sql(f"""SELECT SpawnID FROM spawn
+            spawn_query = pd.read_sql(f"""SELECT SpawnID, stdout FROM spawn
                                        WHERE BatchID={BatchID} AND
-                                       JobIndex={JobIndex}""", conn)['SpawnID']
+                                       JobIndex={JobIndex}""", conn)
+            SpawnIDs = spawn_query['SpawnID']
             if SpawnCount is None:
                 SpawnID = len(SpawnIDs)
             else:  # total number of spawns is known
@@ -311,13 +317,14 @@ def spawn_add_to_db(BatchID, JobIndex, ClusterID, SpawnCount=None,
                     raise Exception(f'nothing to submit for SpawnCount={SpawnCount}')
                 SpawnID = SpawnID[0]
 
+            OutFile, ErrFile = utils.get_log_paths(JobInfo, prev_stdout=spawn_query['stdout'].tolist())
+
             print(f'new spawn with id={SpawnID}')
             conn.execute("""INSERT INTO spawn(BatchID, JobIndex, SpawnID, ClusterID,
                                               spawn_state, stdout, stderr)
                             VALUES (?,?,?,?,?,?,?)""",
-                         [BatchID, JobIndex, SpawnID, ClusterID,
-                          spawn_state, LogOut.format(BatchID=BatchID, submit_id=ClusterID),
-                          LogErr.format(BatchID=BatchID, submit_id=ClusterID)])
+                         [BatchID, JobIndex, SpawnID, ClusterID, spawn_state,
+                          OutFile, ErrFile])
             close_db(conn, db_connection)
             break
 

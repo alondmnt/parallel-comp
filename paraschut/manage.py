@@ -273,6 +273,7 @@ def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor, Spawn=False,
         if job['state'] in ['submit', 'run']:
             warnings.warn('already submitted')
 
+        job['subtime'] = utils.get_time()  # keeping the most recent submission time, may be used by Executor
         submit_id = Executor.submit(job, Spawn=Spawn)
 
         if Spawn:
@@ -282,7 +283,7 @@ def submit_one_job(BatchID, JobIndex, Executor=DefaultJobExecutor, Spawn=False,
                 job['state'] = 'spawn'  # we need to update state to spawn here
                 dal.update_job(job)
 
-            dal.spawn_add_to_db(BatchID, JobIndex, submit_id, SpawnCount=SpawnCount,
+            dal.spawn_add_to_db(job, submit_id, SpawnCount=SpawnCount,
                                 spawn_state=spawn_state, db_connection=conn)
         dal.close_db(conn)
 
@@ -297,7 +298,7 @@ def spawn_submit(JobInfo, N, Executor=DefaultJobExecutor):
     dal.spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'])
 
     # adding self
-    dal.spawn_add_to_db(JobInfo['BatchID'], JobInfo['JobIndex'], ClusterID)
+    dal.spawn_add_to_db(JobInfo, ClusterID)
 
     for _ in range(N):
         submit_one_job(JobInfo['BatchID'], JobInfo['JobIndex'],
@@ -460,7 +461,7 @@ def spawn_complete(JobInfo, db_connection=None, tries=WriteTries):
             # to all other jobs yet
 
             dal.spawn_del_from_db(JobInfo['BatchID'], JobInfo['JobIndex'],
-                              db_connection=conn)
+                                  db_connection=conn)
             dal.close_db(conn, db_connection)
             break
 
