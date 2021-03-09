@@ -115,12 +115,14 @@ def get_job_indices(BatchID, db_connection=None):
 
 def get_batch_info(BatchID, db_connection=None):
     conn = open_db(db_connection)
-    batch_query = list(conn.execute(f"""SELECT metadata, md5 from job WHERE
+    batch_query = list(conn.execute(f"""SELECT JobIndex from job WHERE
                                         BatchID={BatchID}
                                         ORDER BY JobIndex"""))
+    jobs = [get_job_info(BatchID, JobIndex[0], db_connection=conn)
+            for JobIndex in batch_query]
     close_db(conn, db_connection)
 
-    return [unpack_job(job) for job in batch_query]
+    return jobs
 
 
 def get_job_info(BatchID, JobIndex, SetID=False, ClusterID=None,
@@ -180,6 +182,7 @@ def validate_query(BatchID, JobIndex, job_query, enforce_unique_job, conn):
             raise Exception(f'job ({BatchID}, {JobIndex}) is not unique (n={len(job_query)}). run make_job_unique()')
 
     return job_query[0]
+
 
 def spawn_get_info(BatchID, JobIndex, ClusterID=None, db_connection=None,
                    tries=WriteTries):
