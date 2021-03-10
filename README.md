@@ -116,11 +116,11 @@ when running jobs locally, jobs cannot submit other jobs (you may still call the
 
 **resubmitting jobs**
 
-when the jobs you want to resubmit are recognized as 'missing' (see section on job status), you may use `get_queue` to reset their status back to 'init' automatically:
+when the jobs you want to resubmit are recognized as 'missing' (see section on job state), you may use `get_queue` to reset their state back to 'init' automatically:
 
         get_queue(ResetMissing=True)
 
-if a job was stuck in 'spawn' status, you may try the following: (before resorting to initializing status)
+if a job was stuck in 'spawn' state, you may try the following: (before resorting to initializing state)
 
         spawn_resubmit(<batch_id>, <job_idx>)
 
@@ -130,15 +130,15 @@ more generally, you may:
 
         B = get_queue(Filter='name LIKE "%Yang_2015%"', Verbose=False)
 
-* set job status back to 'init'
+* set job state back to 'init'
 
         set_batch_field(B)
 
-by default, this function sets the status back to init _unless_ the job already completed (thus, it allows you to submit only failed jobs). to reset the job completely (regardless of job status), use:
+by default, this function sets the state back to init _unless_ the job already completed (thus, it allows you to submit only failed jobs). to reset the job completely (regardless of job state), use:
 
         set_batch_field(B, Unless={})
 
-multiple JobIndices can be provided as a list, i.e. [1, 2, ...]. similarly, you can set the status of specific jobs within the batch using:
+multiple JobIndices can be provided as a list, i.e. [1, 2, ...]. similarly, you can set the state of specific jobs within the batch using:
 
         set_job_field(B, J)
 
@@ -181,7 +181,7 @@ the following functions are useful to create and use jobs from within scripts an
         spawn_submit()  # for multiplying the current job
         spawn_complete()  # for signaling that one spawn completed, and receiving that all spawns completed
         spawn_resubmit()  # for re-running missing spawn jobs
-        spawn_get_info()  # gets the status of all spawns associated with this job
+        spawn_get_info()  # gets the state of all spawns associated with this job
         submit_jobs()  # can be used after completion to submit the next priority group
 
 ## extending to other job schedulers
