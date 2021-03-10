@@ -51,7 +51,10 @@ def dict_append(dictionary, key, value):
 
 def get_log_paths(JobInfo, replace={'{submit_id}': '%j'}, prev_stdout=None):
     if prev_stdout is None:
-        prev_stdout = JobInfo['stdout']
+        if 'stdout' in JobInfo:
+            prev_stdout = JobInfo['stdout']
+        else:
+            prev_stdout = []
 
     OutFile = LogOut
     ErrFile = LogErr
