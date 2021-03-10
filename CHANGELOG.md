@@ -51,7 +51,7 @@ this release focuses on improved performance and a database update.
 	- improved: `spawn_resubmit()` can be run while jobs are online (but rarely needed)
 - improved: new BatchIDs are based on humanized date/time in sec
 - naming convention: status renamed to state
-- refactoring: job distributed between `manage.py`, `dal.py`, `job_factory` and `utils.py`
+- refactoring: code distributed between `manage.py`, `dal.py`, `job_factory` and `utils.py`
 
 ## v0.2.0
 
