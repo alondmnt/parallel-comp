@@ -125,7 +125,7 @@ class PBSJobExecutor(ClusterJobExecutor):
     def qstat(self):
         Q = {}
         if not self.isconnected():
-            print('get_pbs_queue: not running on cluster.')
+            print('qstat: not running on PBS cluster.')
             return Q
         data = check_output(['qstat', '-u', os.environ['USER']],
                             universal_newlines=True)
@@ -232,7 +232,7 @@ class SGEJobExecutor(ClusterJobExecutor):
     def qstat(self):
         Q = {}
         if not self.isconnected():
-            print('get_pbs_queue: not running on cluster.')
+            print('qstat: not running on SGE cluster.')
             return Q
         data = check_output(['qstat', '-u', os.environ['USER']],
                             universal_newlines=True)
@@ -335,7 +335,7 @@ class SlurmJobExecutor(ClusterJobExecutor):
     def qstat(self):
         Q = {}
         if not self.isconnected():
-            print('get_pbs_queue: not running on cluster.')
+            print('qstat: not running on Slurm cluster.')
             return Q
         data = check_output(['squeue', '-u', os.environ['USER']],
                             universal_newlines=True)

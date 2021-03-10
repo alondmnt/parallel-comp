@@ -120,7 +120,7 @@ def get_queue(Verbose=True, ResetMissing=False, ReportMissing=False,
     # Verbose=True
     print('\nmissing jobs: {}'.format(missing))
     cnt['complete'] += cnt['collected']
-    print('\ntotal jobs on server queue: {}'.format(len(Q_server)))
+    print('\ntotal jobs on {} queue: {}'.format(type(Executor).__name__, len(Q_server)))
     try:
          print('running/complete/total: {online}/{complete}/{total}'.format(**cnt))
     except:
@@ -167,7 +167,7 @@ def submit_jobs(Executor=DefaultJobExecutor, MaxJobs=None, MinPrior=0,
         abandoned lock file).
         Filter are SQL query conditions that get_queue() accepts. """
     if not Executor.isconnected():
-        print('submit_jobs: not connected to cluster.')
+        print(f'submit_jobs: not connected to {type(Executor).__name__} cluster.')
         return
 
     lock_file = JobDir + 'submitting'
