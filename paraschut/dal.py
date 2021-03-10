@@ -20,7 +20,7 @@ import zlib
 
 import pandas as pd
 
-from .config import QFile, WriteTries, LogOut, LogErr, hostname
+from .config import QFile, WriteTries, Hostname
 from . import utils
 
 
@@ -162,7 +162,7 @@ def get_job_info(BatchID, JobIndex, SetID=False, ClusterID=None,
     if ClusterID != JobInfo['submit_id']:
         raise Exception(f"current ClusterID ({ClusterID}) != submit_id ({JobInfo['submit_id']})")
     JobInfo['ClusterID'] = ClusterID
-    JobInfo['hostname'] = hostname
+    JobInfo['hostname'] = Hostname
     JobInfo['state'] = 'run'
 
     update_job(JobInfo, Release=True, db_connection=db_connection)

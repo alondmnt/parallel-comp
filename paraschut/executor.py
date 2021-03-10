@@ -21,8 +21,7 @@ from warnings import warn
 
 import pandas as pd
 
-from .config import PBS_suffix, PBS_queue, DefResource, JobDir, LogOut, LogErr, \
-        ServerHost, hostname
+from .config import DefQueue, DefResource, ServerHost, Hostname
 from . import dal
 from . import utils
 
@@ -71,18 +70,16 @@ class ClusterJobExecutor(JobExecutor):
 class PBSJobExecutor(ClusterJobExecutor):
     """ PBSJobExecutor is initiated with default params that can be
         overriden by jobs. """
-    def __init__(self, queue=PBS_queue, resources=DefResource,
-                 id_suffix=PBS_suffix):
+    def __init__(self, queue=DefQueue, resources=DefResource):
         self.queue = queue
         self.resources = resources
-        self.id_suffix = id_suffix
 
         if 'PBS_JOBID' in os.environ:
-            self.job_id = os.environ['PBS_JOBID'].replace(PBS_suffix, '')
+            self.job_id = os.environ['PBS_JOBID'].split('.')[0]
         else:
             self.job_id = None
 
-        if (self.job_id is not None) or (ServerHost in hostname):
+        if (self.job_id is not None) or (ServerHost in Hostname):
             self.connected_to_cluster = True
         else:
             self.connected_to_cluster = False
@@ -111,9 +108,8 @@ class PBSJobExecutor(ClusterJobExecutor):
             Qsub += ['-v'] + [','.join(['{}={}'.format(k, repr(v))
                               for k, v in sorted(JobInfo['vars'].items())])]
 
-        submit_id_raw = check_output(Qsub + [JobInfo['script']])\
-                .decode('UTF-8').replace('\n', '')
-        submit_id = submit_id_raw.replace(self.id_suffix, '')
+        submit_id = check_output(Qsub + [JobInfo['script']])\
+                .decode('UTF-8').replace('\n', '').split('.')[0]
         update_fields(JobInfo, submit_id, Spawn, OutFile, ErrFile)
 
         return submit_id
@@ -176,18 +172,16 @@ class PBSJobExecutor(ClusterJobExecutor):
 class SGEJobExecutor(ClusterJobExecutor):
     """ SGEJobExecutor is initiated with default params that can be
         overriden by jobs. """
-    def __init__(self, queue=PBS_queue, resources=DefResource,
-                 id_suffix=PBS_suffix):
+    def __init__(self, queue=DefQueue, resources=DefResource):
         self.queue = queue
         self.resources = resources
-        self.id_suffix = id_suffix
 
         if 'JOB_ID' in os.environ:
-            self.job_id = os.environ['JOB_ID'].replace(PBS_suffix, '')
+            self.job_id = os.environ['JOB_ID'].split('.')[0]
         else:
             self.job_id = None
 
-        if (self.job_id is not None) or (ServerHost in hostname):
+        if (self.job_id is not None) or (ServerHost in Hostname):
             self.connected_to_cluster = True
         else:
             self.connected_to_cluster = False
@@ -222,7 +216,7 @@ class SGEJobExecutor(ClusterJobExecutor):
 
         submit_id_raw = check_output(Qsub + [JobInfo['script']])\
                 .decode('UTF-8').replace('\n', '')
-        submit_id = submit_id_raw.split(' ')[2].replace(self.id_suffix, '')
+        submit_id = submit_id_raw.split(' ')[2].split('.')[0]
         update_fields(JobInfo, submit_id, Spawn, OutFile, ErrFile)
 
         return submit_id
@@ -283,18 +277,16 @@ class SGEJobExecutor(ClusterJobExecutor):
 class SlurmJobExecutor(ClusterJobExecutor):
     """ SlurmJobExecutor is initiated with default params that can be
         overriden by jobs. """
-    def __init__(self, queue=PBS_queue, resources=DefResource,
-                 id_suffix=PBS_suffix):
+    def __init__(self, queue=DefQueue, resources=DefResource):
         self.queue = queue
         self.resources = resources
-        self.id_suffix = id_suffix
 
         if 'SLURM_JOBID' in os.environ:
-            self.job_id = os.environ['SLURM_JOBID'].replace(PBS_suffix, '')
+            self.job_id = os.environ['SLURM_JOBID'].split('.')[0]
         else:
             self.job_id = None
 
-        if (self.job_id is not None) or (ServerHost in hostname):
+        if (self.job_id is not None) or (ServerHost in Hostname):
             self.connected_to_cluster = True
         else:
             self.connected_to_cluster = False
@@ -327,7 +319,7 @@ class SlurmJobExecutor(ClusterJobExecutor):
 
         submit_id_raw = check_output(Qsub + [JobInfo['script']])\
                 .decode('UTF-8').replace('\n', '')
-        submit_id = submit_id_raw.split(' ')[3].replace(self.id_suffix, '')
+        submit_id = submit_id_raw.split(' ')[3].split('.')[0]
         update_fields(JobInfo, submit_id, Spawn, OutFile, ErrFile)
 
         return submit_id
@@ -389,7 +381,7 @@ class LocalJobExecutor(JobExecutor):
         self.verbose = verbose
 
         if 'PBS_JOBID' in os.environ and not submitter:
-            self.job_id = os.environ['PBS_JOBID'].replace(PBS_suffix, '')
+            self.job_id = os.environ['PBS_JOBID'].split('.')[0]
         else:
             self.job_id = 'paraschut'
 
@@ -498,7 +490,7 @@ class FileJobExecutor(JobExecutor):
         os.chmod(self.path, 0o744)
 
         if 'PBS_JOBID' in os.environ and not submitter:
-            self.job_id = os.environ['PBS_JOBID'].replace(PBS_suffix, '')
+            self.job_id = os.environ['PBS_JOBID'].split('.')[0]
         else:
             self.job_id = 'paraschut'
 

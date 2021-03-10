@@ -15,13 +15,12 @@ LocalRun = True  # instead of submitting to cluster, run on local machine
 ServerHost = 'tau.ac.il'
 QFile = 'example/job_queue.db'
 JobDir = 'example/'
-PBS_suffix = '.power8.tau.ac.il'
 LogFormat = JobDir + '{BatchID}/logs/{name}_{JobIndex:04d}_{subtime}'  # template
 LogOut = LogFormat + '.out'
 LogErr = LogFormat + '.err'
 TempFiles = ['*.genes.*', '*.len*.npz']
-PBS_queue = 'tamir-nano4'
-WriteTries = 20
+DefQueue = 'tamir-nano4'
+WriteTries = 20 
 
 # example for a job template
 DefResource = {'mem': '1gb', 'pmem': '1gb', 'vmem': '3gb',
@@ -33,10 +32,10 @@ JobTemplate =   {'BatchID': None,
                  'batch_type': 'foo',
                  'data': None,
                  'script': 'my_template_script.sh',  # template sciprt, see generate_script()
-                 'queue': PBS_queue,
+                 'queue': DefQueue,
                  'resources': DefResource,
                  'state': 'init'}
 
 # automatically-set variables
 
-hostname = socket.gethostname()
+Hostname = socket.gethostname()
