@@ -1,10 +1,18 @@
-#  PARASCHUT changelog
+# PARASCHUT changelog
+
+## v0.6.0
+
+- feature: `SlurmJobExecutor` is a new class for managing jobs on a Slurm cluster.  you may define it as the DefaultJobExecutor in `manage.py`.
+- improved: default stdout/stderr logs now define specfic file paths that are compatible across cluster types.
+- fixed: `get_batch_info` supports spawn jobs. as a result, other dependent functions such as `qdel_batch` now handle spawn jobs properly.
+- changed: `config.py` parameter PBS_queue was renamed to DefQueue, and parameter PBS_suffix was removed.
+- improved: misc stability and error handling issues.
 
 ## v0.5.0
 
 this release adds support for the SGE (Sun Grid Engine) cluster.
 
-- feature: `SGEJobExecutor` is a new class for handling jobs on a SGE cluster. you may define it as the DefaultJobExecutor in `manage.py`.
+- feature: `SGEJobExecutor` is a new class for managing jobs on a SGE cluster. you may define it as the DefaultJobExecutor in `manage.py`.
 - feature: setting environment variables for jobs. can be defined by adding a `vars` field with a dict of variable/value pairs.
 - improved: misc stability and error handling issues.
 - changed: renamed PBS_ID-->ClusterID, data_type-->batch_type.

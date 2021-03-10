@@ -1,6 +1,6 @@
 # PARASCHUT: PARAllel SCHeduling UTils
 
-`paraschut` is a job management package. it is used to submit and monitor jobs, locally or on a server. currently, it supports PBS (portable batch system) and SGE (Sun Grid Engine), and can be easily [extended](#extending-to-other-job-schedulers) to other HPC cluster systems (such as Torque, Slurm, condor, etc.). conveniently, it can also turn your local machine into a small cluster by managing multi-processses via the same API. it is de-centralized (does not require a dedicated node running as a server), based on SQLite, controls the execution flow of inter-dependent jobs, handles job errors, and manipulates job parameters at scale.
+`paraschut` is a job management package. it is used to submit and monitor jobs, locally or on a server. currently, it supports PBS (portable batch system), SGE (Sun Grid Engine, Son of Grid Engine) and Slurm, and can be easily [extended](#extending-to-other-job-schedulers) to other HPC cluster systems. conveniently, it can also turn your local machine into a small cluster by managing multi-processses via the same API. it is de-centralized (does not require a dedicated node running as a server), based on SQLite, controls the execution flow of inter-dependent jobs, handles job errors, and manipulates job parameters at scale.
 
 see also the Jupyter notebook [example.ipynb](example.ipynb).
 
@@ -95,7 +95,7 @@ if you need lower level access to job parameters, the following function retriev
 
         get_job_info(<batch_id>, <job_idx>)
 
-this includes, for instance, the last qstat data recorded before the job shut down, the data files used as input/output, its PBS_JOBID, hostname, etc. usually it is unnecessary to access this data. this function is usually used by jobs to get their parameter set.
+this may include, for instance, the last qstat data recorded before the job shut down, the data files used as input/output, the job's ClusterID, hostname, etc. usually it is unnecessary to access this data. this function is usually used by jobs to get their parameter set.
 
 ### job submission
 
@@ -186,4 +186,4 @@ the following functions are useful to create and use jobs from within scripts an
 
 ## extending to other job schedulers
 
-`paraschut` uses a generalized JobExecutor class for managing jobs. currently 4 JobExecutors are implemented: PBSJobExecutor, SGEJobExecutor, LocalJobExecutor, and FileJobExecutor. PBSJobExecutor and SGEJobExecutor, for example, are two simple wrappers for the `qsub`, `qstat`, and `qdel` commands in PBS and SGE, respectively. potentially, a wrapper for any other job scheduler can be added as a new subclass and given as an argument to `submit_jobs`, `get_queue`, and other relevant functions.
+`paraschut` uses a generalized JobExecutor class for managing jobs. currently 5 JobExecutors are implemented: PBSJobExecutor, SGEJobExecutor, SlurmJobExecutor, LocalJobExecutor, and FileJobExecutor. PBSJobExecutor and SGEJobExecutor, for example, are two simple wrappers for the `qsub`, `qstat`, and `qdel` commands in PBS and SGE, respectively. potentially, a wrapper for any other job scheduler can be added as a new subclass and given as an argument to `submit_jobs`, `get_queue`, and other relevant functions.
