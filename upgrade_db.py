@@ -54,7 +54,7 @@ def populate_db(QFile=psu.QFile):
     conn.close()
 
     # test new DB
-    reconstructed_Q = psu.get_sql_queue('.'.join(QFile.split('.')[:-1] + ['db']))
+    reconstructed_Q = psu.get_sql_queue()
     assert all([json.dumps(reconstructed_Q[b], default=set_default) == 
                 json.dumps(Q[b], default=set_default)
                 for b in Q])
