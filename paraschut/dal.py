@@ -97,6 +97,7 @@ def pack_job(JobInfo):
 
 
 def unpack_job(job_query):
+    job_query = list(job_query)
     assert job_query[-1] == hashlib.md5(job_query[-2]).hexdigest()
     JobInfo = pickle.loads(zlib.decompress(job_query[-2]))
     JobInfo['md5'] = job_query[-1]
